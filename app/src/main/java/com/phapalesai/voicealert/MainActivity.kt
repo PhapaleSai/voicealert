@@ -1,10 +1,15 @@
 package com.phapalesai.voicealert
 
+import android.Manifest
 import android.content.Context
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Apps
@@ -25,14 +30,44 @@ import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
 
+    private val permissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { /* Results aren't required immediately; flows re-read state (e.g. call detection) lazily. */ }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val bluetoothManager = VoiceAlertApp.instance.bluetoothManager
+
+        requestRuntimePermissions()
 
         setContent {
             VoiceAlertTheme {
                 MainAppHost(bluetoothManager = bluetoothManager)
             }
+        }
+    }
+
+    /**
+     * The manifest declares POST_NOTIFICATIONS, BLUETOOTH_CONNECT and READ_PHONE_STATE, but
+     * declaring a dangerous permission alone doesn't grant it — without this request, features
+     * like device-type detection and stopping speech when a call is answered silently no-op.
+     */
+    private fun requestRuntimePermissions() {
+        val needed = mutableListOf<String>()
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            needed += Manifest.permission.POST_NOTIFICATIONS
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            needed += Manifest.permission.BLUETOOTH_CONNECT
+        }
+        needed += Manifest.permission.READ_PHONE_STATE
+
+        val toRequest = needed.filter {
+            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
+        }
+        if (toRequest.isNotEmpty()) {
+            permissionLauncher.launch(toRequest.toTypedArray())
         }
     }
 }

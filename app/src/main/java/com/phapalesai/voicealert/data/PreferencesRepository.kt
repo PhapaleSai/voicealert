@@ -48,6 +48,23 @@ class PreferencesRepository(private val context: Context) {
         }
     }
 
+    /** Applies [mode] to every package in [packageNames] in a single write, for bulk actions. */
+    suspend fun setAppModes(packageNames: Collection<String>, mode: String) {
+        if (packageNames.isEmpty()) return
+        context.dataStore.edit { prefs ->
+            val current = prefs[KEY_APP_RULES] ?: ""
+            val rules = current.split(";")
+                .filter { it.isNotBlank() && it.contains("=") }
+                .associate {
+                    val (pkg, m) = it.split("=", limit = 2)
+                    pkg to m
+                }
+                .toMutableMap()
+            packageNames.forEach { rules[it] = mode }
+            prefs[KEY_APP_RULES] = rules.entries.joinToString(";") { "${it.key}=${it.value}" }
+        }
+    }
+
     val travelModeFlow: Flow<Boolean> = context.dataStore.data.map { prefs ->
         prefs[KEY_TRAVEL_MODE] ?: true
     }

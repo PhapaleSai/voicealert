@@ -34,21 +34,31 @@ import com.phapalesai.voicealert.ui.theme.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.util.concurrent.ConcurrentHashMap
 
 private data class InstalledApp(
     val packageName: String,
-    val label: String,
-    val icon: ImageBitmap?
+    val label: String
 )
 
 private enum class ModeFilter { ALL, SPEAK_OVER, SPEAK, DISABLED }
 
 /**
- * Loading every installed app's icon via PackageManager is expensive (~150-250ms for 150+ apps).
- * Cached at the process level so returning to this tab after the first load is instant.
+ * Just labels + package names are cheap to fetch (~a few ms for 200 apps). Cached at the
+ * process level so switching away from this tab and back doesn't redo the PackageManager query.
  */
 private object InstalledAppsCache {
     var apps: List<InstalledApp>? = null
+}
+
+/**
+ * Icon decoding (getApplicationIcon + toBitmap) is the expensive part — tens of ms per app,
+ * which adds up to a very visible stall across ~200 apps if done eagerly. Instead each row
+ * decodes its own icon lazily the first time it's actually composed (i.e. scrolled into view),
+ * and the result is cached here so scrolling back up doesn't redecode it.
+ */
+private object IconCache {
+    val cache = ConcurrentHashMap<String, ImageBitmap?>()
 }
 
 private fun loadInstalledApps(packageManager: PackageManager): List<InstalledApp> {
@@ -62,14 +72,7 @@ private fun loadInstalledApps(packageManager: PackageManager): List<InstalledApp
         .map { appInfo: ApplicationInfo ->
             InstalledApp(
                 packageName = appInfo.packageName,
-                label = packageManager.getApplicationLabel(appInfo).toString(),
-                icon = try {
-                    packageManager.getApplicationIcon(appInfo.packageName)
-                        .toBitmap(width = 96, height = 96)
-                        .asImageBitmap()
-                } catch (e: Exception) {
-                    null
-                }
+                label = packageManager.getApplicationLabel(appInfo).toString()
             )
         }
         .distinctBy { it.packageName }
@@ -211,6 +214,32 @@ fun AppSelectionScreen() {
             singleLine = true
         )
 
+        Spacer(modifier = Modifier.height(10.dp))
+
+        // Bulk actions apply to whatever is currently shown (respects search + filter),
+        // so e.g. searching "game" then hitting "Disable Shown" mutes a whole category at once.
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            BulkActionButton(
+                modifier = Modifier.weight(1f),
+                label = "Speak Shown (${filteredApps.size})",
+                color = EmeraldActive,
+                onClick = {
+                    scope.launch { repository.setAppModes(filteredApps.map { it.packageName }, SpeakMode.SPEAK.name) }
+                }
+            )
+            BulkActionButton(
+                modifier = Modifier.weight(1f),
+                label = "Disable Shown (${filteredApps.size})",
+                color = TextMuted,
+                onClick = {
+                    scope.launch { repository.setAppModes(filteredApps.map { it.packageName }, SpeakMode.DISABLED.name) }
+                }
+            )
+        }
+
         Spacer(modifier = Modifier.height(14.dp))
 
         when {
@@ -270,6 +299,25 @@ private fun AppRuleCard(
     mode: SpeakMode,
     onSelect: (SpeakMode) -> Unit
 ) {
+    val context = LocalContext.current
+    var icon by remember(app.packageName) { mutableStateOf(IconCache.cache[app.packageName]) }
+
+    LaunchedEffect(app.packageName) {
+        if (!IconCache.cache.containsKey(app.packageName)) {
+            val loaded = withContext(Dispatchers.IO) {
+                try {
+                    context.packageManager.getApplicationIcon(app.packageName)
+                        .toBitmap(width = 96, height = 96)
+                        .asImageBitmap()
+                } catch (e: Exception) {
+                    null
+                }
+            }
+            IconCache.cache[app.packageName] = loaded
+            icon = loaded
+        }
+    }
+
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -285,9 +333,9 @@ private fun AppRuleCard(
                         .background(SurfaceGlass),
                     contentAlignment = Alignment.Center
                 ) {
-                    if (app.icon != null) {
+                    if (icon != null) {
                         Image(
-                            bitmap = app.icon,
+                            bitmap = icon!!,
                             contentDescription = null,
                             modifier = Modifier.size(28.dp)
                         )
@@ -307,6 +355,34 @@ private fun AppRuleCard(
             Spacer(modifier = Modifier.height(10.dp))
 
             SpeakModeSelector(selected = mode, onSelect = onSelect)
+        }
+    }
+}
+
+@Composable
+private fun BulkActionButton(
+    modifier: Modifier = Modifier,
+    label: String,
+    color: androidx.compose.ui.graphics.Color,
+    onClick: () -> Unit
+) {
+    Card(
+        onClick = onClick,
+        modifier = modifier.border(1.dp, color.copy(alpha = 0.4f), RoundedCornerShape(12.dp)),
+        colors = CardDefaults.cardColors(containerColor = DeepSlateBg)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 9.dp, horizontal = 6.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold, fontSize = 11.sp),
+                color = color,
+                maxLines = 1
+            )
         }
     }
 }
