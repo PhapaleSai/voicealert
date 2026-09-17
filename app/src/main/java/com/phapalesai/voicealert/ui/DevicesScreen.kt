@@ -7,6 +7,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.BluetoothDisabled
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.DirectionsCar
 import androidx.compose.material.icons.filled.Headphones
@@ -32,13 +33,6 @@ fun DevicesScreen(
     currentDevice: DeviceProfile?,
     onDeviceTypeSelected: (DeviceType) -> Unit
 ) {
-    val activeDevice = currentDevice ?: DeviceProfile(
-        address = "AA:BB:CC:DD:EE:FF",
-        name = "OnePlus Buds Pro",
-        type = DeviceType.PERSONAL,
-        voiceEnabled = true
-    )
-
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
@@ -65,6 +59,47 @@ fun DevicesScreen(
                 color = TextSecondary
             )
         }
+
+        if (currentDevice == null) {
+            item {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .border(1.dp, SurfaceCardBorder, RoundedCornerShape(24.dp)),
+                    colors = CardDefaults.cardColors(containerColor = SurfaceCard)
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(32.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.BluetoothDisabled,
+                            contentDescription = null,
+                            tint = TextMuted,
+                            modifier = Modifier.size(40.dp)
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Text(
+                            text = "No Bluetooth Device Connected",
+                            style = MaterialTheme.typography.titleLarge.copy(fontSize = 16.sp, fontWeight = FontWeight.Bold),
+                            color = TextSecondary
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = "Connect headphones, a car system, or a speaker to classify it here.",
+                            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 12.sp),
+                            color = TextMuted,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                        )
+                    }
+                }
+            }
+            return@LazyColumn
+        }
+
+        val activeDevice = currentDevice
 
         // Active Device Hero Card
         item {

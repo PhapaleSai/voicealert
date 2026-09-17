@@ -32,6 +32,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.phapalesai.voicealert.R
+import com.phapalesai.voicealert.data.DeviceProfile
 import com.phapalesai.voicealert.data.NotificationEvent
 import com.phapalesai.voicealert.notification.VoiceNotificationListenerService
 import com.phapalesai.voicealert.ui.theme.*
@@ -42,7 +43,8 @@ fun HomeScreen(
     onTravelModeChange: (Boolean) -> Unit,
     hasNotificationPermission: Boolean,
     preferredLanguage: String,
-    recentEvents: List<NotificationEvent>
+    recentEvents: List<NotificationEvent>,
+    currentDevice: DeviceProfile?
 ) {
     val context = LocalContext.current
 
@@ -341,9 +343,13 @@ fun HomeScreen(
                             )
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
-                                text = "OnePlus Buds Pro • Personal Earbuds",
+                                text = if (currentDevice != null) {
+                                    "${currentDevice.name} • ${currentDevice.type.name.lowercase().replaceFirstChar { it.uppercase() }}"
+                                } else {
+                                    "No Bluetooth device connected"
+                                },
                                 style = MaterialTheme.typography.bodyMedium.copy(fontSize = 12.sp),
-                                color = TextPrimary
+                                color = if (currentDevice != null) TextPrimary else TextMuted
                             )
                         }
                     }

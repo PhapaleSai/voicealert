@@ -29,6 +29,11 @@ class TTSManager(context: Context) : TextToSpeech.OnInitListener {
 
     private var focusRequest: AudioFocusRequest? = null
 
+    // Remembers the media stream's volume from before we ducked it, so it can be restored
+    // to exactly where the user left it once every queued utterance has finished.
+    private var preDuckMusicVolume: Int? = null
+    private val pendingUtteranceIds = mutableSetOf<String>()
+
     override fun onInit(status: Int) {
         if (status == TextToSpeech.SUCCESS) {
             isInitialized = true
@@ -40,13 +45,13 @@ class TTSManager(context: Context) : TextToSpeech.OnInitListener {
 
                 override fun onDone(utteranceId: String?) {
                     _isSpeakingFlow.value = false
-                    abandonAudioFocus()
+                    onUtteranceFinished(utteranceId)
                 }
 
                 @Deprecated("Deprecated in Java")
                 override fun onError(utteranceId: String?) {
                     _isSpeakingFlow.value = false
-                    abandonAudioFocus()
+                    onUtteranceFinished(utteranceId)
                 }
             })
             Log.d("TTSManager", "TTS Engine initialized successfully")
@@ -55,20 +60,25 @@ class TTSManager(context: Context) : TextToSpeech.OnInitListener {
         }
     }
 
+    private fun onUtteranceFinished(utteranceId: String?) {
+        pendingUtteranceIds.remove(utteranceId)
+        if (pendingUtteranceIds.isEmpty()) {
+            abandonAudioFocus()
+            restoreMediaVolume()
+        }
+    }
+
     /**
      * Speaks [text] at [volume] (0f-1f), respecting [mode]:
-     * - SPEAK_OVER: ducks/interrupts any currently playing audio (music, calls) and speaks immediately.
-     * - SPEAK: only speaks if nothing else is actively playing audio; otherwise skips.
+     * - SPEAK_OVER: ducks any currently playing media and speaks immediately, even breaking
+     *   through Quiet Hours / system DND (enforced by the caller).
+     * - SPEAK: ducks any currently playing media (music, a YouTube video, etc.), speaks, then
+     *   restores it to exactly the volume it was at.
      * - DISABLED: never called for disabled apps (callers should filter this out beforehand).
      */
     fun speak(text: String, targetLocale: Locale, volume: Float = 1f, mode: SpeakMode = SpeakMode.SPEAK) {
         if (!isInitialized || tts == null) {
             Log.w("TTSManager", "TTS engine not ready yet")
-            return
-        }
-
-        if (mode == SpeakMode.SPEAK && audioManager.isMusicActive) {
-            Log.d("TTSManager", "Other audio is playing and mode is SPEAK (not SPEAK_OVER); skipping.")
             return
         }
 
@@ -79,6 +89,7 @@ class TTSManager(context: Context) : TextToSpeech.OnInitListener {
         }
 
         requestAudioFocus(duck = mode == SpeakMode.SPEAK_OVER)
+        duckMediaVolume()
 
         val clampedVolume = volume.coerceIn(0f, 1f)
         val params = Bundle().apply {
@@ -86,7 +97,39 @@ class TTSManager(context: Context) : TextToSpeech.OnInitListener {
         }
 
         _lastSpokenTextFlow.value = text
-        tts?.speak(text, TextToSpeech.QUEUE_ADD, params, System.currentTimeMillis().toString())
+        val utteranceId = System.currentTimeMillis().toString()
+        pendingUtteranceIds.add(utteranceId)
+        tts?.speak(text, TextToSpeech.QUEUE_ADD, params, utteranceId)
+    }
+
+    /** Lowers the media (music/video) stream to ~30% of its current level, remembering the original. */
+    private fun duckMediaVolume() {
+        if (preDuckMusicVolume != null) return // already ducked for an earlier queued utterance
+
+        val current = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+        if (current <= 0) return // nothing playing at audible volume — leave it alone
+
+        val duckedLevel = (current * 0.3f).toInt().coerceIn(0, current)
+        if (duckedLevel < current) {
+            preDuckMusicVolume = current
+            try {
+                audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, duckedLevel, 0)
+            } catch (e: SecurityException) {
+                Log.w("TTSManager", "Could not adjust media volume", e)
+                preDuckMusicVolume = null
+            }
+        }
+    }
+
+    /** Restores the media stream to its pre-duck level, once nothing is left queued to speak. */
+    private fun restoreMediaVolume() {
+        val original = preDuckMusicVolume ?: return
+        try {
+            audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, original, 0)
+        } catch (e: SecurityException) {
+            Log.w("TTSManager", "Could not restore media volume", e)
+        }
+        preDuckMusicVolume = null
     }
 
     private fun requestAudioFocus(duck: Boolean) {
@@ -117,13 +160,17 @@ class TTSManager(context: Context) : TextToSpeech.OnInitListener {
     fun stop() {
         tts?.stop()
         _isSpeakingFlow.value = false
+        pendingUtteranceIds.clear()
         abandonAudioFocus()
+        restoreMediaVolume()
     }
 
     fun shutdown() {
         tts?.stop()
         tts?.shutdown()
         tts = null
+        pendingUtteranceIds.clear()
         abandonAudioFocus()
+        restoreMediaVolume()
     }
 }

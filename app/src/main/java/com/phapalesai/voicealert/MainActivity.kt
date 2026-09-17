@@ -167,7 +167,8 @@ fun MainAppHost(bluetoothManager: BluetoothDeviceManager) {
                     },
                     hasNotificationPermission = hasNotificationPermission,
                     preferredLanguage = preferredLanguage,
-                    recentEvents = recentEvents
+                    recentEvents = recentEvents,
+                    currentDevice = currentDevice
                 )
                 1 -> AppSelectionScreen()
                 2 -> DevicesScreen(
