@@ -12,6 +12,9 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.compose.material.icons.filled.Apps
 import androidx.compose.material.icons.filled.Devices
 import androidx.compose.material.icons.filled.Home
@@ -93,6 +96,21 @@ fun MainAppHost(bluetoothManager: BluetoothDeviceManager) {
 
     val hasNotificationPermission = remember(context) {
         checkNotificationPermission(context)
+    }
+
+    // Self-healing safety net: some OEM battery-management layers (ColorOS, MIUI, etc.) can
+    // delay or drop Bluetooth broadcasts for backgrounded apps, leaving the cached "connected"
+    // state stale. Re-verifying against the real A2DP state every time the app is opened/resumed
+    // means a stuck "still connected" reading corrects itself the moment the user looks at it.
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner, bluetoothManager) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                bluetoothManager.refreshCurrentlyConnectedDevice()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
     var selectedTab by remember { mutableStateOf(0) }

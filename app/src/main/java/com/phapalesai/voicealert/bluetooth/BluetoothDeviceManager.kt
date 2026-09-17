@@ -1,6 +1,7 @@
 package com.phapalesai.voicealert.bluetooth
 
 import android.Manifest
+import android.bluetooth.BluetoothA2dp
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothManager
@@ -39,15 +40,43 @@ class BluetoothDeviceManager(private val context: Context) {
 
     private val connectionReceiver = object : BroadcastReceiver() {
         override fun onReceive(receivedContext: Context, intent: Intent) {
-            val device = getDeviceExtra(intent) ?: return
             when (intent.action) {
-                BluetoothDevice.ACTION_ACL_CONNECTED -> applyConnectedDevice(device)
+                BluetoothDevice.ACTION_ACL_CONNECTED -> {
+                    // ACL is the radio-level link, not the audio profile — a device can stay
+                    // ACL-connected while A2DP disconnects (e.g. it drops to a low-power/idle
+                    // state), so re-verify against the actual profile rather than trusting this.
+                    refreshCurrentlyConnectedDevice()
+                }
                 BluetoothDevice.ACTION_ACL_DISCONNECTED -> {
-                    if (device.address == _connectedDeviceFlow.value?.address) {
+                    val device = getDeviceExtra(intent)
+                    if (device != null && device.address == _connectedDeviceFlow.value?.address) {
+                        _connectedDeviceFlow.value = null
+                    }
+                }
+                BluetoothA2dp.ACTION_CONNECTION_STATE_CHANGED -> {
+                    // The precise signal for "can we actually play audio on this device right
+                    // now" — this is what was missing before, so disconnecting only the A2DP
+                    // profile (common: earbuds going idle, or manually toggling media audio off
+                    // for the device) left the UI stuck showing it as connected.
+                    val device = getDeviceExtra(intent) ?: return
+                    val state = intent.getIntExtra(BluetoothProfile.EXTRA_STATE, -1)
+                    when (state) {
+                        BluetoothProfile.STATE_CONNECTED -> applyConnectedDevice(device)
+                        BluetoothProfile.STATE_DISCONNECTED -> {
+                            if (device.address == _connectedDeviceFlow.value?.address) {
+                                _connectedDeviceFlow.value = null
+                            }
+                        }
+                    }
+                }
+                BluetoothAdapter.ACTION_STATE_CHANGED -> {
+                    val state = intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, -1)
+                    if (state == BluetoothAdapter.STATE_OFF || state == BluetoothAdapter.STATE_TURNING_OFF) {
                         _connectedDeviceFlow.value = null
                     }
                 }
                 ACTION_BATTERY_LEVEL_CHANGED -> {
+                    val device = getDeviceExtra(intent) ?: return
                     val current = _connectedDeviceFlow.value
                     if (current != null && current.address == device.address) {
                         val level = intent.getIntExtra(EXTRA_BATTERY_LEVEL, -1).takeIf { it in 0..100 }
@@ -62,6 +91,8 @@ class BluetoothDeviceManager(private val context: Context) {
         val filter = IntentFilter().apply {
             addAction(BluetoothDevice.ACTION_ACL_CONNECTED)
             addAction(BluetoothDevice.ACTION_ACL_DISCONNECTED)
+            addAction(BluetoothA2dp.ACTION_CONNECTION_STATE_CHANGED)
+            addAction(BluetoothAdapter.ACTION_STATE_CHANGED)
             addAction(ACTION_BATTERY_LEVEL_CHANGED)
         }
         ContextCompat.registerReceiver(context, connectionReceiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED)
