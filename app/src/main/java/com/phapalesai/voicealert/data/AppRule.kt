@@ -1,11 +1,13 @@
 package com.phapalesai.voicealert.data
 
+enum class SpeakMode {
+    SPEAK_OVER, // Duck/interrupt other audio (music, calls-in-background) and speak immediately
+    SPEAK,      // Queue normally, waiting for other audio to finish
+    DISABLED    // Never speak notifications from this app
+}
+
 data class AppRule(
     val packageName: String,
     val displayName: String,
-    val category: String, // "Messaging", "Banking", "Navigation", "Social", "Other"
-    val enabled: Boolean = true,
-    val priority: Priority = Priority.NORMAL,
-    val readSender: Boolean = true,
-    val readContent: Boolean = true
+    val mode: SpeakMode = SpeakMode.SPEAK
 )

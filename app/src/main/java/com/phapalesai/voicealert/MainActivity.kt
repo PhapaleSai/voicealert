@@ -25,11 +25,9 @@ import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
 
-    private lateinit var bluetoothManager: BluetoothDeviceManager
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        bluetoothManager = BluetoothDeviceManager(this)
+        val bluetoothManager = VoiceAlertApp.instance.bluetoothManager
 
         setContent {
             VoiceAlertTheme {

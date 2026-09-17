@@ -1,61 +1,87 @@
 package com.phapalesai.voicealert.ui
 
-import androidx.compose.animation.*
+import android.content.pm.ApplicationInfo
+import android.content.pm.PackageManager
+import android.graphics.drawable.Drawable
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.filled.Apps
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.phapalesai.voicealert.data.AppRule
-import com.phapalesai.voicealert.data.Priority
+import androidx.core.graphics.drawable.toBitmap
+import com.phapalesai.voicealert.VoiceAlertApp
+import com.phapalesai.voicealert.data.SpeakMode
 import com.phapalesai.voicealert.ui.theme.*
+import kotlinx.coroutines.launch
+
+private data class InstalledApp(
+    val packageName: String,
+    val label: String,
+    val icon: Drawable?
+)
+
+private fun loadInstalledApps(packageManager: PackageManager): List<InstalledApp> {
+    val launcherApps = packageManager.getInstalledApplications(PackageManager.GET_META_DATA)
+        .filter { appInfo ->
+            // Only apps that can actually post notifications a user would care about:
+            // apps with a launcher entry (user-facing), including system apps like Phone/Messages.
+            packageManager.getLaunchIntentForPackage(appInfo.packageName) != null
+        }
+    return launcherApps
+        .map { appInfo: ApplicationInfo ->
+            InstalledApp(
+                packageName = appInfo.packageName,
+                label = packageManager.getApplicationLabel(appInfo).toString(),
+                icon = try { packageManager.getApplicationIcon(appInfo.packageName) } catch (e: Exception) { null }
+            )
+        }
+        .distinctBy { it.packageName }
+        .sortedBy { it.label.lowercase() }
+}
 
 @Composable
 fun AppSelectionScreen() {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val repository = VoiceAlertApp.instance.preferencesRepository
+
     var searchQuery by remember { mutableStateOf("") }
-    var selectedCategory by remember { mutableStateOf("All") }
 
-    val defaultApps = remember {
-        mutableStateListOf(
-            AppRule("com.whatsapp", "WhatsApp", "Messaging", true, Priority.NORMAL),
-            AppRule("com.google.android.dialer", "Phone & Calls", "Calls", true, Priority.CRITICAL),
-            AppRule("com.google.android.apps.messaging", "SMS Messages", "Messaging", true, Priority.HIGH),
-            AppRule("com.google.android.apps.maps", "Google Maps", "Navigation", true, Priority.CRITICAL),
-            AppRule("com.sbi.upi", "YONO SBI Bank", "Banking", true, Priority.HIGH),
-            AppRule("com.phonepe.app", "PhonePe Payments", "Banking", true, Priority.HIGH),
-            AppRule("com.google.android.apps.nfcpayment", "Google Pay", "Banking", true, Priority.HIGH),
-            AppRule("com.instagram.android", "Instagram", "Social", false, Priority.LOW),
-            AppRule("com.google.android.youtube", "YouTube", "Social", false, Priority.LOW)
-        )
+    val installedApps = remember {
+        loadInstalledApps(context.packageManager)
     }
 
-    val categories = listOf("All", "Messaging", "Banking", "Calls", "Navigation", "Social")
+    val savedRules by repository.appRulesFlow.collectAsState(initial = emptyMap())
 
-    val filteredApps = defaultApps.filter { app ->
-        val matchesSearch = app.displayName.contains(searchQuery, ignoreCase = true) || app.category.contains(searchQuery, ignoreCase = true)
-        val matchesCategory = selectedCategory == "All" || app.category.equals(selectedCategory, ignoreCase = true)
-        matchesSearch && matchesCategory
+    fun modeFor(packageName: String): SpeakMode {
+        val saved = savedRules[packageName] ?: return SpeakMode.SPEAK
+        return try { SpeakMode.valueOf(saved) } catch (e: IllegalArgumentException) { SpeakMode.SPEAK }
     }
 
-    val activeCount = defaultApps.count { it.enabled }
-    val silencedCount = defaultApps.count { !it.enabled }
+    val filteredApps = remember(searchQuery, installedApps) {
+        if (searchQuery.isBlank()) installedApps
+        else installedApps.filter { it.label.contains(searchQuery, ignoreCase = true) }
+    }
+
+    val speakOverCount = installedApps.count { modeFor(it.packageName) == SpeakMode.SPEAK_OVER }
+    val disabledCount = installedApps.count { modeFor(it.packageName) == SpeakMode.DISABLED }
 
     Column(
         modifier = Modifier
@@ -76,76 +102,40 @@ fun AppSelectionScreen() {
             color = TextPrimary
         )
         Text(
-            text = "Control which applications VoiceAlert is allowed to speak",
+            text = "Choose how each app on your phone is spoken aloud",
             style = MaterialTheme.typography.bodyMedium,
             color = TextSecondary
         )
 
         Spacer(modifier = Modifier.height(14.dp))
 
-        // Active vs Silenced Summary Row
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            Card(
-                modifier = Modifier
-                    .weight(1f)
-                    .border(1.dp, EmeraldActive.copy(alpha = 0.5f), RoundedCornerShape(14.dp)),
-                colors = CardDefaults.cardColors(containerColor = SurfaceCard)
-            ) {
-                Row(
-                    modifier = Modifier.padding(12.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(10.dp)
-                            .clip(CircleShape)
-                            .background(EmeraldActive)
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = "$activeCount Apps Enabled",
-                        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold, fontSize = 12.sp),
-                        color = EmeraldMint
-                    )
-                }
-            }
-
-            Card(
-                modifier = Modifier
-                    .weight(1f)
-                    .border(1.dp, SurfaceCardBorder, RoundedCornerShape(14.dp)),
-                colors = CardDefaults.cardColors(containerColor = SurfaceCard)
-            ) {
-                Row(
-                    modifier = Modifier.padding(12.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(10.dp)
-                            .clip(CircleShape)
-                            .background(TextMuted)
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = "$silencedCount Apps Silenced",
-                        style = MaterialTheme.typography.bodyMedium.copy(fontSize = 12.sp),
-                        color = TextSecondary
-                    )
-                }
-            }
+            SummaryChip(
+                modifier = Modifier.weight(1f),
+                label = "$speakOverCount Speak Over",
+                color = CrimsonAlert
+            )
+            SummaryChip(
+                modifier = Modifier.weight(1f),
+                label = "${installedApps.size - speakOverCount - disabledCount} Speak",
+                color = EmeraldActive
+            )
+            SummaryChip(
+                modifier = Modifier.weight(1f),
+                label = "$disabledCount Disabled",
+                color = TextMuted
+            )
         }
 
         Spacer(modifier = Modifier.height(14.dp))
 
-        // Search Bar
         OutlinedTextField(
             value = searchQuery,
             onValueChange = { searchQuery = it },
-            placeholder = { Text("Search messaging, banking, maps...", color = TextMuted) },
+            placeholder = { Text("Search installed apps...", color = TextMuted) },
             leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = TextSecondary) },
             trailingIcon = {
                 if (searchQuery.isNotEmpty()) {
@@ -168,129 +158,139 @@ fun AppSelectionScreen() {
             singleLine = true
         )
 
-        Spacer(modifier = Modifier.height(12.dp))
-
-        // Category Filter Chips
-        LazyRow(
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            items(categories) { category ->
-                val isSelected = selectedCategory == category
-                FilterChip(
-                    selected = isSelected,
-                    onClick = { selectedCategory = category },
-                    label = { Text(category, fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal) },
-                    colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = ElectricCyan,
-                        selectedLabelColor = DeepSlateBg,
-                        containerColor = SurfaceCard,
-                        labelColor = TextSecondary
-                    ),
-                    border = FilterChipDefaults.filterChipBorder(
-                        borderColor = if (isSelected) ElectricCyanBright else SurfaceCardBorder,
-                        enabled = true,
-                        selected = isSelected
-                    )
-                )
-            }
-        }
-
         Spacer(modifier = Modifier.height(14.dp))
 
         LazyColumn(
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            items(filteredApps) { app ->
-                val icon = when (app.category) {
-                    "Messaging" -> Icons.Default.ChatBubble
-                    "Calls" -> Icons.Default.Call
-                    "Banking" -> Icons.Default.AccountBalance
-                    "Navigation" -> Icons.Default.Navigation
-                    else -> Icons.Default.Apps
-                }
-
-                val accentColor = when (app.priority) {
-                    Priority.CRITICAL -> CrimsonAlert
-                    Priority.HIGH -> SolarGold
-                    Priority.NORMAL -> EmeraldActive
-                    Priority.LOW -> TextMuted
-                }
+            items(filteredApps, key = { it.packageName }) { app ->
+                val mode = modeFor(app.packageName)
 
                 Card(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .border(
-                            1.dp,
-                            if (app.enabled) SurfaceCardBorder else SurfaceCardBorder.copy(alpha = 0.5f),
-                            RoundedCornerShape(18.dp)
-                        ),
+                        .border(1.dp, SurfaceCardBorder, RoundedCornerShape(18.dp)),
                     colors = CardDefaults.cardColors(containerColor = SurfaceCard)
                 ) {
-                    Row(
-                        modifier = Modifier.padding(16.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(42.dp)
-                                .clip(RoundedCornerShape(12.dp))
-                                .background(SurfaceGlass)
-                                .border(1.dp, accentColor.copy(alpha = 0.5f), RoundedCornerShape(12.dp)),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = icon,
-                                contentDescription = null,
-                                tint = accentColor,
-                                modifier = Modifier.size(22.dp)
-                            )
-                        }
-
-                        Spacer(modifier = Modifier.width(14.dp))
-
-                        Column(modifier = Modifier.weight(1f)) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(
-                                    text = app.displayName,
-                                    style = MaterialTheme.typography.titleLarge.copy(fontSize = 16.sp),
-                                    color = if (app.enabled) TextPrimary else TextMuted
-                                )
-                            }
-                            Spacer(modifier = Modifier.height(2.dp))
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(
-                                    text = app.category,
-                                    style = MaterialTheme.typography.bodyMedium.copy(fontSize = 12.sp),
-                                    color = TextSecondary
-                                )
-                                Text(text = " • ", color = TextMuted, fontSize = 12.sp)
-                                Text(
-                                    text = app.priority.name,
-                                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                                    color = accentColor
-                                )
-                            }
-                        }
-
-                        Switch(
-                            checked = app.enabled,
-                            onCheckedChange = { isChecked ->
-                                val index = defaultApps.indexOf(app)
-                                if (index != -1) {
-                                    defaultApps[index] = app.copy(enabled = isChecked)
+                    Column(modifier = Modifier.padding(14.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(
+                                modifier = Modifier
+                                    .size(40.dp)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(SurfaceGlass),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                if (app.icon != null) {
+                                    Image(
+                                        bitmap = app.icon.toBitmap(width = 96, height = 96).asImageBitmap(),
+                                        contentDescription = null,
+                                        modifier = Modifier.size(28.dp)
+                                    )
+                                } else {
+                                    Icon(Icons.Default.Apps, contentDescription = null, tint = TextSecondary)
                                 }
-                            },
-                            colors = SwitchDefaults.colors(
-                                checkedThumbColor = DeepSlateBg,
-                                checkedTrackColor = EmeraldActive,
-                                uncheckedThumbColor = TextMuted,
-                                uncheckedTrackColor = SurfaceCardBorder
+                            }
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Text(
+                                text = app.label,
+                                style = MaterialTheme.typography.titleLarge.copy(fontSize = 15.sp),
+                                color = if (mode == SpeakMode.DISABLED) TextMuted else TextPrimary,
+                                modifier = Modifier.weight(1f)
                             )
+                        }
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        SpeakModeSelector(
+                            selected = mode,
+                            onSelect = { newMode ->
+                                scope.launch {
+                                    repository.setAppMode(app.packageName, newMode.name)
+                                }
+                            }
                         )
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun SummaryChip(modifier: Modifier = Modifier, label: String, color: androidx.compose.ui.graphics.Color) {
+    Card(
+        modifier = modifier.border(1.dp, color.copy(alpha = 0.5f), RoundedCornerShape(14.dp)),
+        colors = CardDefaults.cardColors(containerColor = SurfaceCard)
+    ) {
+        Box(modifier = Modifier.padding(vertical = 10.dp), contentAlignment = Alignment.Center) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold, fontSize = 11.sp),
+                color = color
+            )
+        }
+    }
+}
+
+@Composable
+private fun SpeakModeSelector(selected: SpeakMode, onSelect: (SpeakMode) -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        ModeOption(
+            modifier = Modifier.weight(1f),
+            label = "Speak Over",
+            active = selected == SpeakMode.SPEAK_OVER,
+            color = CrimsonAlert,
+            onClick = { onSelect(SpeakMode.SPEAK_OVER) }
+        )
+        ModeOption(
+            modifier = Modifier.weight(1f),
+            label = "Speak",
+            active = selected == SpeakMode.SPEAK,
+            color = EmeraldActive,
+            onClick = { onSelect(SpeakMode.SPEAK) }
+        )
+        ModeOption(
+            modifier = Modifier.weight(1f),
+            label = "Disabled",
+            active = selected == SpeakMode.DISABLED,
+            color = TextMuted,
+            onClick = { onSelect(SpeakMode.DISABLED) }
+        )
+    }
+}
+
+@Composable
+private fun ModeOption(
+    modifier: Modifier = Modifier,
+    label: String,
+    active: Boolean,
+    color: androidx.compose.ui.graphics.Color,
+    onClick: () -> Unit
+) {
+    Card(
+        onClick = onClick,
+        modifier = modifier.border(
+            1.dp,
+            if (active) color else SurfaceCardBorder,
+            RoundedCornerShape(10.dp)
+        ),
+        colors = CardDefaults.cardColors(
+            containerColor = if (active) color.copy(alpha = 0.18f) else DeepSlateBg
+        )
+    ) {
+        Box(modifier = Modifier.padding(vertical = 8.dp), contentAlignment = Alignment.Center) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelSmall.copy(
+                    fontWeight = if (active) FontWeight.Bold else FontWeight.Normal,
+                    fontSize = 11.sp
+                ),
+                color = if (active) color else TextSecondary
+            )
         }
     }
 }

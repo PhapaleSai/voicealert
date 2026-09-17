@@ -19,6 +19,33 @@ class PreferencesRepository(private val context: Context) {
         val KEY_SPEECH_SPEED = stringPreferencesKey("speech_speed") // "1.0"
         val KEY_OTP_PROTECTION = booleanPreferencesKey("otp_protection")
         val KEY_BANK_MASKING = booleanPreferencesKey("bank_masking")
+        val KEY_APP_RULES = stringPreferencesKey("app_speak_rules") // "pkg1=SPEAK;pkg2=DISABLED"
+    }
+
+    /** Map of packageName -> SpeakMode name, for apps the user has explicitly configured. */
+    val appRulesFlow: Flow<Map<String, String>> = context.dataStore.data.map { prefs ->
+        val raw = prefs[KEY_APP_RULES] ?: return@map emptyMap()
+        raw.split(";")
+            .filter { it.isNotBlank() && it.contains("=") }
+            .associate {
+                val (pkg, mode) = it.split("=", limit = 2)
+                pkg to mode
+            }
+    }
+
+    suspend fun setAppMode(packageName: String, mode: String) {
+        context.dataStore.edit { prefs ->
+            val current = prefs[KEY_APP_RULES] ?: ""
+            val rules = current.split(";")
+                .filter { it.isNotBlank() && it.contains("=") }
+                .associate {
+                    val (pkg, m) = it.split("=", limit = 2)
+                    pkg to m
+                }
+                .toMutableMap()
+            rules[packageName] = mode
+            prefs[KEY_APP_RULES] = rules.entries.joinToString(";") { "${it.key}=${it.value}" }
+        }
     }
 
     val travelModeFlow: Flow<Boolean> = context.dataStore.data.map { prefs ->

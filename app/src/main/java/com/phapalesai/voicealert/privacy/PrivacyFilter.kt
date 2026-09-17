@@ -14,9 +14,19 @@ object PrivacyFilter {
         globalPrivacyMode: Boolean
     ): String? {
 
-        // If Car Mode or Shared Speaker and privacy mode enabled, block private content
+        // Fully switched off: no voice announcements at all.
+        if (deviceType == DeviceType.SILENT) {
+            return null
+        }
+
+        // Shared/public speakers (e.g. a home speaker) still speak, but quieter and
+        // sender-only, to avoid broadcasting private message content out loud.
         if (deviceType == DeviceType.SHARED) {
-            return null // Completely silent on shared public speakers
+            return when (language) {
+                "hi" -> "$appName से संदेश।"
+                "mr" -> "$appName कडून संदेश."
+                else -> "New message from $appName."
+            }
         }
 
         if (deviceType == DeviceType.CAR && globalPrivacyMode) {

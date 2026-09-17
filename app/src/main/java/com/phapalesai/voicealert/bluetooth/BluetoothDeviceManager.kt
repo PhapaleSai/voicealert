@@ -5,6 +5,7 @@ import android.bluetooth.BluetoothDevice
 import android.content.Context
 import com.phapalesai.voicealert.data.DeviceProfile
 import com.phapalesai.voicealert.data.DeviceType
+import com.phapalesai.voicealert.data.defaultVolume
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 
@@ -34,7 +35,8 @@ class BluetoothDeviceManager(private val context: Context) {
                         address = activeDevice.address ?: "00:11:22:33:44:55",
                         name = deviceName,
                         type = type,
-                        voiceEnabled = type == DeviceType.PERSONAL
+                        voiceEnabled = type != DeviceType.SILENT,
+                        volume = type.defaultVolume()
                     )
                     return
                 }
@@ -56,7 +58,8 @@ class BluetoothDeviceManager(private val context: Context) {
         val current = _connectedDeviceFlow.value ?: return
         _connectedDeviceFlow.value = current.copy(
             type = type,
-            voiceEnabled = type == DeviceType.PERSONAL
+            voiceEnabled = type != DeviceType.SILENT,
+            volume = type.defaultVolume()
         )
     }
 }

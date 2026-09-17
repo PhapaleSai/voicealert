@@ -11,6 +11,7 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.DirectionsCar
 import androidx.compose.material.icons.filled.Headphones
 import androidx.compose.material.icons.filled.Speaker
+import androidx.compose.material.icons.filled.VolumeOff
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -97,6 +98,7 @@ fun DevicesScreen(
                                         DeviceType.PERSONAL -> Icons.Default.Headphones
                                         DeviceType.CAR -> Icons.Default.DirectionsCar
                                         DeviceType.SHARED -> Icons.Default.Speaker
+                                        DeviceType.SILENT -> Icons.Default.VolumeOff
                                         DeviceType.OTHER -> Icons.Default.Headphones
                                     },
                                     contentDescription = null,
@@ -158,12 +160,23 @@ fun DevicesScreen(
                     Spacer(modifier = Modifier.height(10.dp))
 
                     DeviceTypeChip(
-                        title = "Shared / Public Speaker",
-                        description = "Completely silences all notification speech",
+                        title = "Home / Public Speaker",
+                        description = "Speaks quietly, sender name only — no loud blurted messages",
                         icon = Icons.Default.Speaker,
-                        color = CrimsonAlert,
+                        color = SolarGold,
                         selected = activeDevice.type == DeviceType.SHARED,
                         onSelect = { onDeviceTypeSelected(DeviceType.SHARED) }
+                    )
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    DeviceTypeChip(
+                        title = "Silent / Off",
+                        description = "Completely switches off voice announcements",
+                        icon = Icons.Default.VolumeOff,
+                        color = CrimsonAlert,
+                        selected = activeDevice.type == DeviceType.SILENT,
+                        onSelect = { onDeviceTypeSelected(DeviceType.SILENT) }
                     )
                 }
             }
@@ -186,13 +199,14 @@ fun DevicesScreen(
                     Spacer(modifier = Modifier.height(12.dp))
 
                     val (isVoiceOn, isCallsOn, isPrivacyOn) = when (activeDevice.type) {
-                        DeviceType.PERSONAL -> Triple("Voice ON", "Calls Allowed", "Full Details")
+                        DeviceType.PERSONAL -> Triple("Voice ON (100%)", "Calls Allowed", "Full Details")
                         DeviceType.CAR -> Triple("Calls/Nav Only", "Calls Allowed", "Sender Only")
-                        DeviceType.SHARED -> Triple("Voice OFF", "Silent", "Blocked")
+                        DeviceType.SHARED -> Triple("Voice ON (quiet)", "Calls Allowed", "Sender Only")
+                        DeviceType.SILENT -> Triple("Voice OFF", "Silent", "Blocked")
                         DeviceType.OTHER -> Triple("Voice ON", "Allowed", "Standard")
                     }
 
-                    RuleCheckRow(title = "Notification Voice Speech", status = isVoiceOn, isGood = activeDevice.type != DeviceType.SHARED)
+                    RuleCheckRow(title = "Notification Voice Speech", status = isVoiceOn, isGood = activeDevice.type != DeviceType.SILENT)
                     RuleCheckRow(title = "Phone Call Announcements", status = isCallsOn, isGood = true)
                     RuleCheckRow(title = "Privacy Mode Protection", status = isPrivacyOn, isGood = true)
                 }
