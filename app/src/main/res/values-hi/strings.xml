@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">VoiceAlert</string>
+    <string name="app_tagline">संदर्भ-जागरूक हैंड्स-फ्री वॉइस असिस्टेंट</string>
+    <string name="travel_mode">यात्रा मोड</string>
+    <string name="travel_mode_active">सक्रिय • सूचनाओं की निगरानी</string>
+    <string name="travel_mode_inactive">निष्क्रिय • शांत मोड</string>
+    <string name="permission_banner_title">नोटिफिकेशन एक्सेस आवश्यक है</string>
+    <string name="permission_banner_desc">हेडफोन पर अलर्ट पढ़ने के लिए VoiceAlert को नोटिफिकेशन एक्सेस अनुमति की आवश्यकता है।</string>
+    <string name="grant_permission">अनुमति दें</string>
+    <string name="connected_device">कनेक्टेड ऑडियो डिवाइस</string>
+    <string name="privacy_mode">गोपनीयता मोड</string>
+    <string name="language_selection">भाषा प्राथमिकता</string>
+    <string name="auto_detect">ऑटो-डिटेक्ट (अंग्रेजी / हिंदी / मराठी)</string>
+    <string name="english">अंग्रेजी</string>
+    <string name="hindi">हिंदी (हिन्दी)</string>
+    <string name="marathi">मराठी (मराठी)</string>
+    <string name="test_speech">वॉइस आउटपुट का परीक्षण करें</string>
+    <string name="recent_alerts">हाल के बोले गए अलर्ट</string>
+    <string name="no_alerts_yet">अभी तक कोई अलर्ट नहीं बोला गया। हेडफ़ोन कनेक्ट करें और यात्रा मोड चालू करें!</string>
+    <string name="apps_tab">ऐप्स</string>
+    <string name="home_tab">होम</string>
+    <string name="devices_tab">डिवाइस</string>
+    <string name="settings_tab">सेटिंग्स</string>
+    <string name="otp_privacy">ओटीपी सुरक्षा सक्रिय</string>
+    <string name="bank_masking">बैंक राशि फ़ॉर्मेटिंग सक्रिय</string>
+</resources>
