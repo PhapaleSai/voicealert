@@ -344,7 +344,9 @@ fun HomeScreen(
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
                                 text = if (currentDevice != null) {
-                                    "${currentDevice.name} • ${currentDevice.type.name.lowercase().replaceFirstChar { it.uppercase() }}"
+                                    val typeLabel = currentDevice.type.name.lowercase().replaceFirstChar { it.uppercase() }
+                                    val batterySuffix = currentDevice.batteryLevel?.let { " • $it% battery" } ?: ""
+                                    "${currentDevice.name} • $typeLabel$batterySuffix"
                                 } else {
                                     "No Bluetooth device connected"
                                 },

@@ -25,5 +25,7 @@ data class DeviceProfile(
     val volume: Float = type.defaultVolume(),
     val allowCalls: Boolean = true,
     val allowNavigation: Boolean = true,
-    val privacyModeEnabled: Boolean = false
+    val privacyModeEnabled: Boolean = false,
+    /** 0-100, or null if the device doesn't report battery level (many A2DP devices don't). */
+    val batteryLevel: Int? = null
 )

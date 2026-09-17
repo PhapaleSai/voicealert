@@ -7,6 +7,10 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.BatteryAlert
+import androidx.compose.material.icons.filled.BatteryFull
+import androidx.compose.material.icons.filled.Battery3Bar
+import androidx.compose.material.icons.filled.Battery5Bar
 import androidx.compose.material.icons.filled.BluetoothDisabled
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.DirectionsCar
@@ -155,6 +159,30 @@ fun DevicesScreen(
                                     text = "Connected • MAC: ${activeDevice.address}",
                                     style = MaterialTheme.typography.bodyMedium.copy(fontSize = 12.sp),
                                     color = EmeraldMint
+                                )
+                            }
+                        }
+
+                        if (activeDevice.batteryLevel != null) {
+                            Row(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(SurfaceGlass)
+                                    .border(1.dp, SurfaceGlassBorder, RoundedCornerShape(12.dp))
+                                    .padding(horizontal = 12.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = batteryIconFor(activeDevice.batteryLevel),
+                                    contentDescription = null,
+                                    tint = batteryColorFor(activeDevice.batteryLevel),
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = "${activeDevice.batteryLevel}%",
+                                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold, fontSize = 13.sp),
+                                    color = batteryColorFor(activeDevice.batteryLevel)
                                 )
                             }
                         }
@@ -332,4 +360,17 @@ fun DeviceTypeChip(
             }
         }
     }
+}
+
+private fun batteryIconFor(level: Int): ImageVector = when {
+    level <= 15 -> Icons.Default.BatteryAlert
+    level <= 50 -> Icons.Default.Battery3Bar
+    level <= 85 -> Icons.Default.Battery5Bar
+    else -> Icons.Default.BatteryFull
+}
+
+private fun batteryColorFor(level: Int): Color = when {
+    level <= 15 -> CrimsonAlert
+    level <= 30 -> SolarGold
+    else -> EmeraldMint
 }
