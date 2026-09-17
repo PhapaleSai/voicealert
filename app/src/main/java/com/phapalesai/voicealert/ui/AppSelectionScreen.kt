@@ -223,11 +223,17 @@ private fun SummaryChip(modifier: Modifier = Modifier, label: String, color: and
         modifier = modifier.border(1.dp, color.copy(alpha = 0.5f), RoundedCornerShape(14.dp)),
         colors = CardDefaults.cardColors(containerColor = SurfaceCard)
     ) {
-        Box(modifier = Modifier.padding(vertical = 10.dp), contentAlignment = Alignment.Center) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 10.dp, horizontal = 6.dp),
+            contentAlignment = Alignment.Center
+        ) {
             Text(
                 text = label,
                 style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold, fontSize = 11.sp),
-                color = color
+                color = color,
+                maxLines = 1
             )
         }
     }
@@ -282,14 +288,20 @@ private fun ModeOption(
             containerColor = if (active) color.copy(alpha = 0.18f) else DeepSlateBg
         )
     ) {
-        Box(modifier = Modifier.padding(vertical = 8.dp), contentAlignment = Alignment.Center) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 8.dp),
+            contentAlignment = Alignment.Center
+        ) {
             Text(
                 text = label,
                 style = MaterialTheme.typography.labelSmall.copy(
                     fontWeight = if (active) FontWeight.Bold else FontWeight.Normal,
                     fontSize = 11.sp
                 ),
-                color = if (active) color else TextSecondary
+                color = if (active) color else TextSecondary,
+                maxLines = 1
             )
         }
     }
