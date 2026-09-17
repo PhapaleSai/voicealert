@@ -2,17 +2,23 @@ package com.phapalesai.voicealert.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Language
+import androidx.compose.material.icons.filled.NightsStay
 import androidx.compose.material.icons.filled.PrivacyTip
+import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
@@ -31,7 +37,14 @@ fun SettingsScreen(
     otpProtection: Boolean,
     onOtpProtectionChange: (Boolean) -> Unit,
     bankMasking: Boolean,
-    onBankMaskingChange: (Boolean) -> Unit
+    onBankMaskingChange: (Boolean) -> Unit,
+    quietHoursEnabled: Boolean,
+    onQuietHoursEnabledChange: (Boolean) -> Unit,
+    quietHoursStart: Int,
+    quietHoursEnd: Int,
+    onQuietHoursRangeChange: (start: Int, end: Int) -> Unit,
+    respectDnd: Boolean,
+    onRespectDndChange: (Boolean) -> Unit
 ) {
     var speechSpeed by remember { mutableFloatStateOf(1.0f) }
 
@@ -196,6 +209,79 @@ fun SettingsScreen(
             }
         }
 
+        // Quiet Hours & Do Not Disturb Card
+        item {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .border(1.dp, SurfaceCardBorder, RoundedCornerShape(22.dp)),
+                colors = CardDefaults.cardColors(containerColor = SurfaceCard)
+            ) {
+                Column(modifier = Modifier.padding(18.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Default.NightsStay,
+                            contentDescription = null,
+                            tint = ElectricCyanBright,
+                            modifier = Modifier.size(24.dp)
+                        )
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Text(
+                            text = "Quiet Hours & Do Not Disturb",
+                            style = MaterialTheme.typography.titleLarge.copy(fontSize = 16.sp, fontWeight = FontWeight.Bold),
+                            color = ElectricCyanBright
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    SettingToggleRow(
+                        title = "Quiet Hours",
+                        subtitle = "Stay silent overnight or during a set window every day",
+                        checked = quietHoursEnabled,
+                        onCheckedChange = onQuietHoursEnabledChange
+                    )
+
+                    if (quietHoursEnabled) {
+                        Spacer(modifier = Modifier.height(14.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            HourStepper(
+                                modifier = Modifier.weight(1f),
+                                label = "From",
+                                hour = quietHoursStart,
+                                onHourChange = { newStart -> onQuietHoursRangeChange(newStart, quietHoursEnd) }
+                            )
+                            HourStepper(
+                                modifier = Modifier.weight(1f),
+                                label = "Until",
+                                hour = quietHoursEnd,
+                                onHourChange = { newEnd -> onQuietHoursRangeChange(quietHoursStart, newEnd) }
+                            )
+                        }
+                    }
+
+                    Divider(color = SurfaceCardBorder, modifier = Modifier.padding(vertical = 10.dp))
+
+                    SettingToggleRow(
+                        title = "Respect System Do Not Disturb",
+                        subtitle = "Stay silent whenever your phone's own DND is on",
+                        checked = respectDnd,
+                        onCheckedChange = onRespectDndChange
+                    )
+
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "Apps set to \"Speak Over\" always break through both of these.",
+                        style = MaterialTheme.typography.bodyMedium.copy(fontSize = 11.sp),
+                        color = TextMuted
+                    )
+                }
+            }
+        }
+
         // Audio Speed Slider Card
         item {
             Card(
@@ -257,6 +343,79 @@ fun SettingsScreen(
                 }
             }
         }
+    }
+}
+
+private fun formatHour(hour: Int): String {
+    val normalized = ((hour % 24) + 24) % 24
+    val period = if (normalized < 12) "AM" else "PM"
+    val display = when {
+        normalized == 0 -> 12
+        normalized > 12 -> normalized - 12
+        else -> normalized
+    }
+    return "$display:00 $period"
+}
+
+@Composable
+private fun HourStepper(
+    modifier: Modifier = Modifier,
+    label: String,
+    hour: Int,
+    onHourChange: (Int) -> Unit
+) {
+    Column(
+        modifier = modifier
+            .border(1.dp, SurfaceCardBorder, RoundedCornerShape(14.dp))
+            .padding(10.dp)
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 11.sp),
+            color = TextSecondary
+        )
+        Spacer(modifier = Modifier.height(6.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            HourStepButton(
+                icon = Icons.Default.Remove,
+                contentDescription = "Earlier",
+                onClick = { onHourChange(((hour - 1) % 24 + 24) % 24) }
+            )
+            Text(
+                text = formatHour(hour),
+                style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Bold, fontSize = 13.sp),
+                color = ElectricCyanBright,
+                maxLines = 1,
+                softWrap = false
+            )
+            HourStepButton(
+                icon = Icons.Default.Add,
+                contentDescription = "Later",
+                onClick = { onHourChange((hour + 1) % 24) }
+            )
+        }
+    }
+}
+
+@Composable
+private fun HourStepButton(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    contentDescription: String,
+    onClick: () -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .size(26.dp)
+            .clip(CircleShape)
+            .background(DeepSlateBg)
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(icon, contentDescription = contentDescription, tint = TextSecondary, modifier = Modifier.size(14.dp))
     }
 }
 

@@ -3,6 +3,7 @@ package com.phapalesai.voicealert.data
 import android.content.Context
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
@@ -20,6 +21,10 @@ class PreferencesRepository(private val context: Context) {
         val KEY_OTP_PROTECTION = booleanPreferencesKey("otp_protection")
         val KEY_BANK_MASKING = booleanPreferencesKey("bank_masking")
         val KEY_APP_RULES = stringPreferencesKey("app_speak_rules") // "pkg1=SPEAK;pkg2=DISABLED"
+        val KEY_QUIET_HOURS_ENABLED = booleanPreferencesKey("quiet_hours_enabled")
+        val KEY_QUIET_HOURS_START = intPreferencesKey("quiet_hours_start_hour") // 0-23
+        val KEY_QUIET_HOURS_END = intPreferencesKey("quiet_hours_end_hour") // 0-23
+        val KEY_RESPECT_DND = booleanPreferencesKey("respect_system_dnd")
     }
 
     /** Map of packageName -> SpeakMode name, for apps the user has explicitly configured. */
@@ -113,5 +118,40 @@ class PreferencesRepository(private val context: Context) {
         context.dataStore.edit { prefs ->
             prefs[KEY_BANK_MASKING] = enabled
         }
+    }
+
+    /** Whether Quiet Hours is on (e.g. auto-mute overnight or during a meeting window). */
+    val quietHoursEnabledFlow: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[KEY_QUIET_HOURS_ENABLED] ?: false
+    }
+
+    /** Quiet Hours start hour, 0-23, local time. Default 22 (10 PM). */
+    val quietHoursStartFlow: Flow<Int> = context.dataStore.data.map { prefs ->
+        prefs[KEY_QUIET_HOURS_START] ?: 22
+    }
+
+    /** Quiet Hours end hour, 0-23, local time. Default 7 (7 AM). */
+    val quietHoursEndFlow: Flow<Int> = context.dataStore.data.map { prefs ->
+        prefs[KEY_QUIET_HOURS_END] ?: 7
+    }
+
+    /** Whether to stay silent (except Speak Over apps) when the phone's system Do Not Disturb is active. */
+    val respectDndFlow: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[KEY_RESPECT_DND] ?: true
+    }
+
+    suspend fun setQuietHoursEnabled(enabled: Boolean) {
+        context.dataStore.edit { prefs -> prefs[KEY_QUIET_HOURS_ENABLED] = enabled }
+    }
+
+    suspend fun setQuietHoursRange(startHour: Int, endHour: Int) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_QUIET_HOURS_START] = startHour
+            prefs[KEY_QUIET_HOURS_END] = endHour
+        }
+    }
+
+    suspend fun setRespectDnd(enabled: Boolean) {
+        context.dataStore.edit { prefs -> prefs[KEY_RESPECT_DND] = enabled }
     }
 }

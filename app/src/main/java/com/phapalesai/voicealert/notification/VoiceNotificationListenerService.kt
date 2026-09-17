@@ -58,7 +58,7 @@ class VoiceNotificationListenerService : NotificationListenerService() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             val callback = object : TelephonyCallback(), TelephonyCallback.CallStateListener {
                 override fun onCallStateChanged(state: Int) {
-                    onCallStateChanged(state)
+                    handleCallStateChanged(state)
                 }
             }
             try {
@@ -72,7 +72,7 @@ class VoiceNotificationListenerService : NotificationListenerService() {
             val listener = object : PhoneStateListener() {
                 @Deprecated("Deprecated in Java")
                 override fun onCallStateChanged(state: Int, phoneNumber: String?) {
-                    this@VoiceNotificationListenerService.onCallStateChanged(state)
+                    handleCallStateChanged(state)
                 }
             }
             try {
@@ -95,7 +95,7 @@ class VoiceNotificationListenerService : NotificationListenerService() {
         }
     }
 
-    private fun onCallStateChanged(state: Int) {
+    private fun handleCallStateChanged(state: Int) {
         if (state == TelephonyManager.CALL_STATE_RINGING || state == TelephonyManager.CALL_STATE_OFFHOOK) {
             Log.d("VoiceListener", "Call ringing/answered — stopping voice alerts.")
             ttsManager?.stop()
@@ -127,6 +127,23 @@ class VoiceNotificationListenerService : NotificationListenerService() {
             if (speakMode == SpeakMode.DISABLED) {
                 Log.d("VoiceListener", "App $packageName is disabled for voice alerts. Skipping.")
                 return@launch
+            }
+
+            // Speak Over apps (e.g. an urgent contact) bypass Quiet Hours and system DND on purpose.
+            if (speakMode != SpeakMode.SPEAK_OVER) {
+                if (repository.quietHoursEnabledFlow.first()) {
+                    val start = repository.quietHoursStartFlow.first()
+                    val end = repository.quietHoursEndFlow.first()
+                    if (isWithinQuietHours(start, end)) {
+                        Log.d("VoiceListener", "Quiet Hours active ($start:00-$end:00). Skipping.")
+                        return@launch
+                    }
+                }
+
+                if (repository.respectDndFlow.first() && currentInterruptionFilter != INTERRUPTION_FILTER_ALL) {
+                    Log.d("VoiceListener", "System Do Not Disturb is active. Skipping.")
+                    return@launch
+                }
             }
 
             val device = app.bluetoothManager.connectedDeviceFlow.value
@@ -175,6 +192,23 @@ class VoiceNotificationListenerService : NotificationListenerService() {
     fun speakTestMessage(text: String, langCode: String) {
         val locale = LanguageDetector.detectLanguage(text, langCode)
         ttsManager?.speak(text, locale)
+    }
+
+    /** Re-speaks the most recent alert — handy when it got drowned out by noise the first time. */
+    fun repeatLastAlert() {
+        val last = _recentEventsFlow.value.firstOrNull() ?: return
+        speakTestMessage(last.spokenText, last.language)
+    }
+
+    private fun isWithinQuietHours(startHour: Int, endHour: Int): Boolean {
+        if (startHour == endHour) return false
+        val currentHour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
+        return if (startHour < endHour) {
+            currentHour in startHour until endHour
+        } else {
+            // Window wraps past midnight, e.g. 22 (10 PM) -> 7 (7 AM).
+            currentHour >= startHour || currentHour < endHour
+        }
     }
 
     companion object {

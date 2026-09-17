@@ -83,6 +83,10 @@ fun MainAppHost(bluetoothManager: BluetoothDeviceManager) {
     val privacyMode by repository.privacyModeFlow.collectAsState(initial = false)
     val otpProtection by repository.otpProtectionFlow.collectAsState(initial = true)
     val bankMasking by repository.bankMaskingFlow.collectAsState(initial = true)
+    val quietHoursEnabled by repository.quietHoursEnabledFlow.collectAsState(initial = false)
+    val quietHoursStart by repository.quietHoursStartFlow.collectAsState(initial = 22)
+    val quietHoursEnd by repository.quietHoursEndFlow.collectAsState(initial = 7)
+    val respectDnd by repository.respectDndFlow.collectAsState(initial = true)
 
     val currentDevice by bluetoothManager.connectedDeviceFlow.collectAsState(initial = null)
     val recentEvents by VoiceNotificationListenerService.recentEventsFlow.collectAsState(initial = emptyList())
@@ -188,6 +192,19 @@ fun MainAppHost(bluetoothManager: BluetoothDeviceManager) {
                     bankMasking = bankMasking,
                     onBankMaskingChange = { enabled ->
                         scope.launch { repository.setBankMasking(enabled) }
+                    },
+                    quietHoursEnabled = quietHoursEnabled,
+                    onQuietHoursEnabledChange = { enabled ->
+                        scope.launch { repository.setQuietHoursEnabled(enabled) }
+                    },
+                    quietHoursStart = quietHoursStart,
+                    quietHoursEnd = quietHoursEnd,
+                    onQuietHoursRangeChange = { start, end ->
+                        scope.launch { repository.setQuietHoursRange(start, end) }
+                    },
+                    respectDnd = respectDnd,
+                    onRespectDndChange = { enabled ->
+                        scope.launch { repository.setRespectDnd(enabled) }
                     }
                 )
             }

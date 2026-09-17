@@ -487,11 +487,30 @@ fun HomeScreen(
                 )
 
                 if (recentEvents.isNotEmpty()) {
-                    Text(
-                        text = "${recentEvents.size} items",
-                        style = MaterialTheme.typography.bodyMedium.copy(fontSize = 12.sp),
-                        color = TextMuted
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        TextButton(
+                            onClick = { VoiceNotificationListenerService.activeService?.repeatLastAlert() },
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Replay,
+                                contentDescription = null,
+                                tint = ElectricCyanBright,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "Repeat",
+                                style = MaterialTheme.typography.bodyMedium.copy(fontSize = 12.sp, fontWeight = FontWeight.Bold),
+                                color = ElectricCyanBright
+                            )
+                        }
+                        Text(
+                            text = "${recentEvents.size} items",
+                            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 12.sp),
+                            color = TextMuted
+                        )
+                    }
                 }
             }
         }
