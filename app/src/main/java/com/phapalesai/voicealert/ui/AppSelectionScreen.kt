@@ -2,7 +2,6 @@ package com.phapalesai.voicealert.ui
 
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
-import android.graphics.drawable.Drawable
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -13,6 +12,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Apps
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -20,6 +20,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -28,14 +29,27 @@ import androidx.compose.ui.unit.sp
 import androidx.core.graphics.drawable.toBitmap
 import com.phapalesai.voicealert.VoiceAlertApp
 import com.phapalesai.voicealert.data.SpeakMode
+import com.phapalesai.voicealert.notification.VoiceNotificationListenerService
 import com.phapalesai.voicealert.ui.theme.*
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 private data class InstalledApp(
     val packageName: String,
     val label: String,
-    val icon: Drawable?
+    val icon: ImageBitmap?
 )
+
+private enum class ModeFilter { ALL, SPEAK_OVER, SPEAK, DISABLED }
+
+/**
+ * Loading every installed app's icon via PackageManager is expensive (~150-250ms for 150+ apps).
+ * Cached at the process level so returning to this tab after the first load is instant.
+ */
+private object InstalledAppsCache {
+    var apps: List<InstalledApp>? = null
+}
 
 private fun loadInstalledApps(packageManager: PackageManager): List<InstalledApp> {
     val launcherApps = packageManager.getInstalledApplications(PackageManager.GET_META_DATA)
@@ -49,7 +63,13 @@ private fun loadInstalledApps(packageManager: PackageManager): List<InstalledApp
             InstalledApp(
                 packageName = appInfo.packageName,
                 label = packageManager.getApplicationLabel(appInfo).toString(),
-                icon = try { packageManager.getApplicationIcon(appInfo.packageName) } catch (e: Exception) { null }
+                icon = try {
+                    packageManager.getApplicationIcon(appInfo.packageName)
+                        .toBitmap(width = 96, height = 96)
+                        .asImageBitmap()
+                } catch (e: Exception) {
+                    null
+                }
             )
         }
         .distinctBy { it.packageName }
@@ -63,21 +83,48 @@ fun AppSelectionScreen() {
     val repository = VoiceAlertApp.instance.preferencesRepository
 
     var searchQuery by remember { mutableStateOf("") }
+    var activeFilter by remember { mutableStateOf(ModeFilter.ALL) }
 
-    val installedApps = remember {
-        loadInstalledApps(context.packageManager)
+    var installedApps by remember { mutableStateOf(InstalledAppsCache.apps ?: emptyList()) }
+    var isLoading by remember { mutableStateOf(InstalledAppsCache.apps == null) }
+
+    LaunchedEffect(Unit) {
+        if (InstalledAppsCache.apps == null) {
+            val loaded = withContext(Dispatchers.Default) {
+                loadInstalledApps(context.packageManager)
+            }
+            InstalledAppsCache.apps = loaded
+            installedApps = loaded
+            isLoading = false
+        }
     }
 
     val savedRules by repository.appRulesFlow.collectAsState(initial = emptyMap())
+    val recentEvents by VoiceNotificationListenerService.recentEventsFlow.collectAsState(initial = emptyList())
 
     fun modeFor(packageName: String): SpeakMode {
         val saved = savedRules[packageName] ?: return SpeakMode.SPEAK
         return try { SpeakMode.valueOf(saved) } catch (e: IllegalArgumentException) { SpeakMode.SPEAK }
     }
 
-    val filteredApps = remember(searchQuery, installedApps) {
-        if (searchQuery.isBlank()) installedApps
-        else installedApps.filter { it.label.contains(searchQuery, ignoreCase = true) }
+    val recentPackageNames = remember(recentEvents) {
+        recentEvents.map { it.packageName }.distinct()
+    }
+    val recentApps = remember(recentPackageNames, installedApps) {
+        recentPackageNames.mapNotNull { pkg -> installedApps.find { it.packageName == pkg } }
+    }
+
+    val filteredApps = remember(searchQuery, installedApps, activeFilter, savedRules) {
+        installedApps.filter { app ->
+            val matchesSearch = searchQuery.isBlank() || app.label.contains(searchQuery, ignoreCase = true)
+            val matchesFilter = when (activeFilter) {
+                ModeFilter.ALL -> true
+                ModeFilter.SPEAK_OVER -> modeFor(app.packageName) == SpeakMode.SPEAK_OVER
+                ModeFilter.SPEAK -> modeFor(app.packageName) == SpeakMode.SPEAK
+                ModeFilter.DISABLED -> modeFor(app.packageName) == SpeakMode.DISABLED
+            }
+            matchesSearch && matchesFilter
+        }
     }
 
     val speakOverCount = installedApps.count { modeFor(it.packageName) == SpeakMode.SPEAK_OVER }
@@ -116,17 +163,23 @@ fun AppSelectionScreen() {
             SummaryChip(
                 modifier = Modifier.weight(1f),
                 label = "$speakOverCount Speak Over",
-                color = CrimsonAlert
+                color = CrimsonAlert,
+                selected = activeFilter == ModeFilter.SPEAK_OVER,
+                onClick = { activeFilter = if (activeFilter == ModeFilter.SPEAK_OVER) ModeFilter.ALL else ModeFilter.SPEAK_OVER }
             )
             SummaryChip(
                 modifier = Modifier.weight(1f),
                 label = "${installedApps.size - speakOverCount - disabledCount} Speak",
-                color = EmeraldActive
+                color = EmeraldActive,
+                selected = activeFilter == ModeFilter.SPEAK,
+                onClick = { activeFilter = if (activeFilter == ModeFilter.SPEAK) ModeFilter.ALL else ModeFilter.SPEAK }
             )
             SummaryChip(
                 modifier = Modifier.weight(1f),
                 label = "$disabledCount Disabled",
-                color = TextMuted
+                color = TextMuted,
+                selected = activeFilter == ModeFilter.DISABLED,
+                onClick = { activeFilter = if (activeFilter == ModeFilter.DISABLED) ModeFilter.ALL else ModeFilter.DISABLED }
             )
         }
 
@@ -160,54 +213,48 @@ fun AppSelectionScreen() {
 
         Spacer(modifier = Modifier.height(14.dp))
 
-        LazyColumn(
-            verticalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            items(filteredApps, key = { it.packageName }) { app ->
-                val mode = modeFor(app.packageName)
-
-                Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .border(1.dp, SurfaceCardBorder, RoundedCornerShape(18.dp)),
-                    colors = CardDefaults.cardColors(containerColor = SurfaceCard)
+        when {
+            isLoading -> {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator(color = ElectricCyanBright)
+                }
+            }
+            else -> {
+                LazyColumn(
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    Column(modifier = Modifier.padding(14.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Box(
-                                modifier = Modifier
-                                    .size(40.dp)
-                                    .clip(RoundedCornerShape(10.dp))
-                                    .background(SurfaceGlass),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                if (app.icon != null) {
-                                    Image(
-                                        bitmap = app.icon.toBitmap(width = 96, height = 96).asImageBitmap(),
-                                        contentDescription = null,
-                                        modifier = Modifier.size(28.dp)
-                                    )
-                                } else {
-                                    Icon(Icons.Default.Apps, contentDescription = null, tint = TextSecondary)
-                                }
+                    if (recentApps.isNotEmpty() && searchQuery.isBlank() && activeFilter == ModeFilter.ALL) {
+                        item(key = "recent_header") {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.History, contentDescription = null, tint = ElectricCyanBright, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = "Recently Notified",
+                                    style = MaterialTheme.typography.titleLarge.copy(fontSize = 13.sp, fontWeight = FontWeight.Bold),
+                                    color = ElectricCyanBright
+                                )
                             }
-                            Spacer(modifier = Modifier.width(12.dp))
-                            Text(
-                                text = app.label,
-                                style = MaterialTheme.typography.titleLarge.copy(fontSize = 15.sp),
-                                color = if (mode == SpeakMode.DISABLED) TextMuted else TextPrimary,
-                                modifier = Modifier.weight(1f)
+                        }
+                        items(recentApps, key = { "recent_${it.packageName}" }) { app ->
+                            AppRuleCard(
+                                app = app,
+                                mode = modeFor(app.packageName),
+                                onSelect = { newMode ->
+                                    scope.launch { repository.setAppMode(app.packageName, newMode.name) }
+                                }
                             )
                         }
+                        item(key = "recent_divider") {
+                            HorizontalDivider(color = SurfaceCardBorder, modifier = Modifier.padding(vertical = 4.dp))
+                        }
+                    }
 
-                        Spacer(modifier = Modifier.height(10.dp))
-
-                        SpeakModeSelector(
-                            selected = mode,
+                    items(filteredApps, key = { it.packageName }) { app ->
+                        AppRuleCard(
+                            app = app,
+                            mode = modeFor(app.packageName),
                             onSelect = { newMode ->
-                                scope.launch {
-                                    repository.setAppMode(app.packageName, newMode.name)
-                                }
+                                scope.launch { repository.setAppMode(app.packageName, newMode.name) }
                             }
                         )
                     }
@@ -218,10 +265,70 @@ fun AppSelectionScreen() {
 }
 
 @Composable
-private fun SummaryChip(modifier: Modifier = Modifier, label: String, color: androidx.compose.ui.graphics.Color) {
+private fun AppRuleCard(
+    app: InstalledApp,
+    mode: SpeakMode,
+    onSelect: (SpeakMode) -> Unit
+) {
     Card(
-        modifier = modifier.border(1.dp, color.copy(alpha = 0.5f), RoundedCornerShape(14.dp)),
+        modifier = Modifier
+            .fillMaxWidth()
+            .border(1.dp, SurfaceCardBorder, RoundedCornerShape(18.dp)),
         colors = CardDefaults.cardColors(containerColor = SurfaceCard)
+    ) {
+        Column(modifier = Modifier.padding(14.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(SurfaceGlass),
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (app.icon != null) {
+                        Image(
+                            bitmap = app.icon,
+                            contentDescription = null,
+                            modifier = Modifier.size(28.dp)
+                        )
+                    } else {
+                        Icon(Icons.Default.Apps, contentDescription = null, tint = TextSecondary)
+                    }
+                }
+                Spacer(modifier = Modifier.width(12.dp))
+                Text(
+                    text = app.label,
+                    style = MaterialTheme.typography.titleLarge.copy(fontSize = 15.sp),
+                    color = if (mode == SpeakMode.DISABLED) TextMuted else TextPrimary,
+                    modifier = Modifier.weight(1f)
+                )
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            SpeakModeSelector(selected = mode, onSelect = onSelect)
+        }
+    }
+}
+
+@Composable
+private fun SummaryChip(
+    modifier: Modifier = Modifier,
+    label: String,
+    color: androidx.compose.ui.graphics.Color,
+    selected: Boolean = false,
+    onClick: (() -> Unit)? = null
+) {
+    Card(
+        onClick = onClick ?: {},
+        modifier = modifier.border(
+            if (selected) 1.5.dp else 1.dp,
+            if (selected) color else color.copy(alpha = 0.5f),
+            RoundedCornerShape(14.dp)
+        ),
+        colors = CardDefaults.cardColors(
+            containerColor = if (selected) color.copy(alpha = 0.18f) else SurfaceCard
+        )
     ) {
         Box(
             modifier = Modifier

@@ -55,6 +55,18 @@
             </intent-filter>
         </service>
 
+        <!-- Quick Settings tile: toggle Travel Mode from the notification shade -->
+        <service
+            android:name=".TravelModeTileService"
+            android:label="VoiceAlert"
+            android:icon="@drawable/ic_launcher_foreground"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
+
     </application>
 
 </manifest>
