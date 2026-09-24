@@ -88,6 +88,45 @@ notification shade) to flip Travel Mode on/off in one tap.
 4. **TTSManager** ducks any playing media, speaks the sentence at a volume
    matched to your device profile, then restores media volume.
 
+### Architecture
+
+```
+                         🎧 VOICEALERT
+                              │
+                              ▼
+                     Device Detection
+                              │
+             ┌────────────────┼────────────────┐
+             ▼                ▼                 ▼
+       🎧 Personal         🚗 Car          🔊 Shared
+             │                │                 │
+        Voice ON        Privacy ON         Voice OFF
+             │                │                 │
+             └────────────────┼─────────────────┘
+                              ▼
+                     Notification Engine
+                              │
+                ┌─────────────┼─────────────┐
+                ▼              ▼             ▼
+              Calls          Apps        Messages
+                │              │             │
+                └─────────────┼─────────────┘
+                              ▼
+                      Privacy Filter
+                              │
+                              ▼
+                      Priority Engine
+                              │
+                              ▼
+                       Speech Queue
+                              │
+                              ▼
+                             TTS
+                              │
+                              ▼
+                          🎧 Audio
+```
+
 ---
 
 ## Getting started
