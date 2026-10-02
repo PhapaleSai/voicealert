@@ -70,10 +70,11 @@ class TTSManager(context: Context) : TextToSpeech.OnInitListener {
 
     /**
      * Speaks [text] at [volume] (0f-1f), respecting [mode]:
-     * - SPEAK_OVER: ducks any currently playing media and speaks immediately, even breaking
-     *   through Quiet Hours / system DND (enforced by the caller).
-     * - SPEAK: ducks any currently playing media (music, a YouTube video, etc.), speaks, then
-     *   restores it to exactly the volume it was at.
+     * - SPEAK_OVER: interrupts anything we're currently saying (flushes our own queue) and ducks
+     *   any currently playing media, speaking immediately — even breaking through Quiet Hours /
+     *   system DND (enforced by the caller). Used for urgent apps and the incoming-call announcement.
+     * - SPEAK: queues normally behind anything already being said; ducks any currently playing
+     *   media (music, a YouTube video, etc.), speaks, then restores it to exactly the volume it was at.
      * - DISABLED: never called for disabled apps (callers should filter this out beforehand).
      */
     fun speak(text: String, targetLocale: Locale, volume: Float = 1f, mode: SpeakMode = SpeakMode.SPEAK) {
@@ -96,10 +97,19 @@ class TTSManager(context: Context) : TextToSpeech.OnInitListener {
             putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, clampedVolume)
         }
 
+        val queueMode = if (mode == SpeakMode.SPEAK_OVER) {
+            // Whatever we were mid-sentence on no longer matters — it won't get an onDone/onError
+            // callback once flushed, so drop it from tracking ourselves instead of leaking it.
+            pendingUtteranceIds.clear()
+            TextToSpeech.QUEUE_FLUSH
+        } else {
+            TextToSpeech.QUEUE_ADD
+        }
+
         _lastSpokenTextFlow.value = text
         val utteranceId = System.currentTimeMillis().toString()
         pendingUtteranceIds.add(utteranceId)
-        tts?.speak(text, TextToSpeech.QUEUE_ADD, params, utteranceId)
+        tts?.speak(text, queueMode, params, utteranceId)
     }
 
     /** Lowers the media (music/video) stream to ~30% of its current level, remembering the original. */

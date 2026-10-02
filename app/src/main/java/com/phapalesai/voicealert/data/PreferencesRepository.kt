@@ -25,6 +25,8 @@ class PreferencesRepository(private val context: Context) {
         val KEY_QUIET_HOURS_START = intPreferencesKey("quiet_hours_start_hour") // 0-23
         val KEY_QUIET_HOURS_END = intPreferencesKey("quiet_hours_end_hour") // 0-23
         val KEY_RESPECT_DND = booleanPreferencesKey("respect_system_dnd")
+        val KEY_USER_NAME = stringPreferencesKey("user_name")
+        val KEY_ANNOUNCE_CALLER = booleanPreferencesKey("announce_caller_enabled")
     }
 
     /** Map of packageName -> SpeakMode name, for apps the user has explicitly configured. */
@@ -153,5 +155,23 @@ class PreferencesRepository(private val context: Context) {
 
     suspend fun setRespectDnd(enabled: Boolean) {
         context.dataStore.edit { prefs -> prefs[KEY_RESPECT_DND] = enabled }
+    }
+
+    /** The user's own name, spoken in the caller announcement (e.g. "Hey Sai, Mom is calling"). */
+    val userNameFlow: Flow<String> = context.dataStore.data.map { prefs ->
+        prefs[KEY_USER_NAME] ?: ""
+    }
+
+    /** Whether incoming calls get announced by caller name/number at all. */
+    val announceCallerFlow: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[KEY_ANNOUNCE_CALLER] ?: true
+    }
+
+    suspend fun setUserName(name: String) {
+        context.dataStore.edit { prefs -> prefs[KEY_USER_NAME] = name }
+    }
+
+    suspend fun setAnnounceCaller(enabled: Boolean) {
+        context.dataStore.edit { prefs -> prefs[KEY_ANNOUNCE_CALLER] = enabled }
     }
 }

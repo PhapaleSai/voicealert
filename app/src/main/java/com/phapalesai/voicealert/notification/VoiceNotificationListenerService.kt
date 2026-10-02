@@ -1,14 +1,23 @@
 package com.phapalesai.voicealert.notification
 
+import android.Manifest
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.content.pm.PackageManager
+import android.database.Cursor
+import android.net.Uri
 import android.os.Build
 import android.os.IBinder
+import android.provider.ContactsContract
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import android.telephony.PhoneStateListener
 import android.telephony.TelephonyCallback
 import android.telephony.TelephonyManager
 import android.util.Log
+import androidx.core.content.ContextCompat
 import com.phapalesai.voicealert.VoiceAlertApp
 import com.phapalesai.voicealert.data.DeviceType
 import com.phapalesai.voicealert.data.NotificationEvent
@@ -21,6 +30,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class VoiceNotificationListenerService : NotificationListenerService() {
 
@@ -35,19 +45,114 @@ class VoiceNotificationListenerService : NotificationListenerService() {
     private var telephonyCallback: TelephonyCallback? = null
     private var legacyPhoneStateListener: PhoneStateListener? = null
 
+    // Caller announcement ("Hey Sai, Mom is calling") needs the incoming number, which
+    // TelephonyCallback/PhoneStateListener's state callback doesn't carry — only the
+    // ACTION_PHONE_STATE_CHANGED broadcast's EXTRA_INCOMING_NUMBER does (requires READ_CALL_LOG).
+    private var lastAnnouncedNumber: String? = null
+
+    private val phoneStateReceiver = object : BroadcastReceiver() {
+        override fun onReceive(receivedContext: Context, intent: Intent) {
+            val state = intent.getStringExtra(TelephonyManager.EXTRA_STATE)
+            if (state == TelephonyManager.EXTRA_STATE_RINGING) {
+                val incomingNumber = intent.getStringExtra(TelephonyManager.EXTRA_INCOMING_NUMBER)
+                if (!incomingNumber.isNullOrBlank() && incomingNumber != lastAnnouncedNumber) {
+                    lastAnnouncedNumber = incomingNumber
+                    announceIncomingCall(incomingNumber)
+                }
+            } else {
+                lastAnnouncedNumber = null
+            }
+        }
+    }
+
     override fun onCreate() {
         super.onCreate()
         ttsManager = TTSManager(applicationContext)
         activeService = this
         registerCallStateWatcher()
+        try {
+            ContextCompat.registerReceiver(
+                this,
+                phoneStateReceiver,
+                IntentFilter(TelephonyManager.ACTION_PHONE_STATE_CHANGED),
+                ContextCompat.RECEIVER_NOT_EXPORTED
+            )
+        } catch (e: SecurityException) {
+            Log.w("VoiceListener", "Missing permission to observe incoming call number", e)
+        }
         Log.d("VoiceListener", "VoiceNotificationListenerService Created")
     }
 
     override fun onDestroy() {
         super.onDestroy()
         unregisterCallStateWatcher()
+        try {
+            unregisterReceiver(phoneStateReceiver)
+        } catch (e: IllegalArgumentException) {
+            // Receiver was never registered (e.g. permission was missing at onCreate) — fine to ignore.
+        }
         ttsManager?.shutdown()
         activeService = null
+    }
+
+    /** "Hey Sai, Mom is calling" — or just "Mom is calling" if no name is set in Settings. */
+    private fun announceIncomingCall(phoneNumber: String) {
+        scope.launch {
+            val repository = VoiceAlertApp.instance.preferencesRepository
+
+            if (!repository.travelModeFlow.first() || !repository.announceCallerFlow.first()) return@launch
+
+            val device = VoiceAlertApp.instance.bluetoothManager.connectedDeviceFlow.value
+            if (device != null && !device.voiceEnabled) return@launch
+
+            val callerName = resolveContactName(phoneNumber) ?: phoneNumber
+            val userName = repository.userNameFlow.first()
+            val preferredLang = repository.preferredLanguageFlow.first()
+
+            val announcement = if (userName.isNotBlank()) {
+                "Hey $userName, $callerName is calling"
+            } else {
+                "$callerName is calling"
+            }
+
+            Log.d("VoiceListener", "Announcing incoming call: $announcement")
+            val locale = LanguageDetector.detectLanguage(announcement, preferredLang)
+            // SPEAK_OVER: a ringing call is already an interruption, so the announcement should
+            // always cut through, at full volume, regardless of what's currently playing.
+            ttsManager?.speak(announcement, locale, volume = 1f, mode = SpeakMode.SPEAK_OVER)
+        }
+    }
+
+    private suspend fun resolveContactName(phoneNumber: String): String? {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_CONTACTS) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            return null
+        }
+        return withContext(Dispatchers.IO) {
+            try {
+                val uri: Uri = Uri.withAppendedPath(
+                    ContactsContract.PhoneLookup.CONTENT_FILTER_URI,
+                    Uri.encode(phoneNumber)
+                )
+                val cursor: Cursor? = contentResolver.query(
+                    uri,
+                    arrayOf(ContactsContract.PhoneLookup.DISPLAY_NAME),
+                    null,
+                    null,
+                    null
+                )
+                cursor?.use {
+                    if (it.moveToFirst()) {
+                        it.getString(it.getColumnIndexOrThrow(ContactsContract.PhoneLookup.DISPLAY_NAME))
+                    } else {
+                        null
+                    }
+                }
+            } catch (e: SecurityException) {
+                null
+            }
+        }
     }
 
     /** Stops speaking the instant a call rings or is answered — a live call always wins. */
@@ -96,8 +201,12 @@ class VoiceNotificationListenerService : NotificationListenerService() {
     }
 
     private fun handleCallStateChanged(state: Int) {
-        if (state == TelephonyManager.CALL_STATE_RINGING || state == TelephonyManager.CALL_STATE_OFFHOOK) {
-            Log.d("VoiceListener", "Call ringing/answered — stopping voice alerts.")
+        // Only OFFHOOK (call answered) forcibly silences everything — once the user is actually
+        // on a call, nothing should keep talking. RINGING is deliberately left alone here: the
+        // caller announcement (see announceIncomingCall) needs to speak *during* the ring, and
+        // stopping all TTS on RINGING would race with and potentially kill that announcement.
+        if (state == TelephonyManager.CALL_STATE_OFFHOOK) {
+            Log.d("VoiceListener", "Call answered — stopping voice alerts.")
             ttsManager?.stop()
             currentlySpokenKey = null
         }

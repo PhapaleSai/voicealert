@@ -9,6 +9,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.NightsStay
 import androidx.compose.material.icons.filled.PrivacyTip
@@ -44,7 +45,11 @@ fun SettingsScreen(
     quietHoursEnd: Int,
     onQuietHoursRangeChange: (start: Int, end: Int) -> Unit,
     respectDnd: Boolean,
-    onRespectDndChange: (Boolean) -> Unit
+    onRespectDndChange: (Boolean) -> Unit,
+    userName: String,
+    onUserNameChange: (String) -> Unit,
+    announceCaller: Boolean,
+    onAnnounceCallerChange: (Boolean) -> Unit
 ) {
     var speechSpeed by remember { mutableFloatStateOf(1.0f) }
 
@@ -278,6 +283,90 @@ fun SettingsScreen(
                         style = MaterialTheme.typography.bodyMedium.copy(fontSize = 11.sp),
                         color = TextMuted
                     )
+                }
+            }
+        }
+
+        // Caller Announcement Card
+        item {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .border(1.dp, SurfaceCardBorder, RoundedCornerShape(22.dp)),
+                colors = CardDefaults.cardColors(containerColor = SurfaceCard)
+            ) {
+                Column(modifier = Modifier.padding(18.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Default.Call,
+                            contentDescription = null,
+                            tint = EmeraldActive,
+                            modifier = Modifier.size(24.dp)
+                        )
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Text(
+                            text = "Caller Announcement",
+                            style = MaterialTheme.typography.titleLarge.copy(fontSize = 16.sp, fontWeight = FontWeight.Bold),
+                            color = EmeraldActive
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    SettingToggleRow(
+                        title = "Announce Incoming Calls",
+                        subtitle = "Speaks the caller's name when your phone rings",
+                        checked = announceCaller,
+                        onCheckedChange = onAnnounceCallerChange
+                    )
+
+                    if (announceCaller) {
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Text(
+                            text = "Your name",
+                            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 12.sp),
+                            color = TextSecondary
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+
+                        // The field shows its own local state, not `userName` directly: binding
+                        // the displayed value straight to the DataStore-backed flow means every
+                        // keystroke races a write-then-reread round trip through disk, and any
+                        // lag snaps the field back to the stale value — it looks like typing does
+                        // nothing. Local state is always instantaneous; the repository write
+                        // still happens in the background on every change.
+                        var nameInput by remember { mutableStateOf(userName) }
+                        OutlinedTextField(
+                            value = nameInput,
+                            onValueChange = {
+                                nameInput = it
+                                onUserNameChange(it)
+                            },
+                            placeholder = { Text("e.g. Sai", color = TextMuted) },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .border(1.dp, SurfaceCardBorder, RoundedCornerShape(12.dp)),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedContainerColor = DeepSlateBg,
+                                unfocusedContainerColor = DeepSlateBg,
+                                focusedBorderColor = EmeraldActive,
+                                unfocusedBorderColor = SurfaceCardBorder,
+                                focusedTextColor = TextPrimary,
+                                unfocusedTextColor = TextPrimary
+                            ),
+                            singleLine = true
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = if (nameInput.isNotBlank()) {
+                                "You'll hear: \"Hey $nameInput, Mom is calling\""
+                            } else {
+                                "You'll hear: \"Mom is calling\" — add your name above for a personal greeting"
+                            },
+                            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 11.sp),
+                            color = TextMuted
+                        )
+                    }
                 }
             }
         }

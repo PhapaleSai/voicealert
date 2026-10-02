@@ -65,6 +65,8 @@ class MainActivity : ComponentActivity() {
             needed += Manifest.permission.BLUETOOTH_CONNECT
         }
         needed += Manifest.permission.READ_PHONE_STATE
+        needed += Manifest.permission.READ_CALL_LOG
+        needed += Manifest.permission.READ_CONTACTS
 
         val toRequest = needed.filter {
             ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
@@ -90,6 +92,8 @@ fun MainAppHost(bluetoothManager: BluetoothDeviceManager) {
     val quietHoursStart by repository.quietHoursStartFlow.collectAsState(initial = 22)
     val quietHoursEnd by repository.quietHoursEndFlow.collectAsState(initial = 7)
     val respectDnd by repository.respectDndFlow.collectAsState(initial = true)
+    val userName by repository.userNameFlow.collectAsState(initial = "")
+    val announceCaller by repository.announceCallerFlow.collectAsState(initial = true)
 
     val currentDevice by bluetoothManager.connectedDeviceFlow.collectAsState(initial = null)
     val recentEvents by VoiceNotificationListenerService.recentEventsFlow.collectAsState(initial = emptyList())
@@ -224,6 +228,14 @@ fun MainAppHost(bluetoothManager: BluetoothDeviceManager) {
                     respectDnd = respectDnd,
                     onRespectDndChange = { enabled ->
                         scope.launch { repository.setRespectDnd(enabled) }
+                    },
+                    userName = userName,
+                    onUserNameChange = { name ->
+                        scope.launch { repository.setUserName(name) }
+                    },
+                    announceCaller = announceCaller,
+                    onAnnounceCallerChange = { enabled ->
+                        scope.launch { repository.setAnnounceCaller(enabled) }
                     }
                 )
             }
