@@ -7,6 +7,7 @@ import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
@@ -94,6 +95,32 @@ fun MainAppHost(bluetoothManager: BluetoothDeviceManager) {
     val respectDnd by repository.respectDndFlow.collectAsState(initial = true)
     val userName by repository.userNameFlow.collectAsState(initial = "")
     val announceCaller by repository.announceCallerFlow.collectAsState(initial = true)
+    val vipContacts by repository.vipContactsFlow.collectAsState(initial = emptyList())
+    val lowBatteryAlert by repository.lowBatteryAlertFlow.collectAsState(initial = true)
+    val dailyDigestEnabled by repository.dailyDigestEnabledFlow.collectAsState(initial = false)
+    val shakeToStop by repository.shakeToStopFlow.collectAsState(initial = true)
+
+    val contactPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickContact()
+    ) { uri ->
+        if (uri != null) {
+            val cursor = context.contentResolver.query(
+                uri,
+                arrayOf(android.provider.ContactsContract.Contacts.DISPLAY_NAME),
+                null,
+                null,
+                null
+            )
+            cursor?.use {
+                if (it.moveToFirst()) {
+                    val name = it.getString(it.getColumnIndexOrThrow(android.provider.ContactsContract.Contacts.DISPLAY_NAME))
+                    if (!name.isNullOrBlank()) {
+                        scope.launch { repository.addVipContact(name) }
+                    }
+                }
+            }
+        }
+    }
 
     val currentDevice by bluetoothManager.connectedDeviceFlow.collectAsState(initial = null)
     val recentEvents by VoiceNotificationListenerService.recentEventsFlow.collectAsState(initial = emptyList())
@@ -236,6 +263,23 @@ fun MainAppHost(bluetoothManager: BluetoothDeviceManager) {
                     announceCaller = announceCaller,
                     onAnnounceCallerChange = { enabled ->
                         scope.launch { repository.setAnnounceCaller(enabled) }
+                    },
+                    vipContacts = vipContacts,
+                    onAddVipContact = { contactPickerLauncher.launch(null) },
+                    onRemoveVipContact = { name ->
+                        scope.launch { repository.removeVipContact(name) }
+                    },
+                    lowBatteryAlert = lowBatteryAlert,
+                    onLowBatteryAlertChange = { enabled ->
+                        scope.launch { repository.setLowBatteryAlert(enabled) }
+                    },
+                    dailyDigestEnabled = dailyDigestEnabled,
+                    onDailyDigestEnabledChange = { enabled ->
+                        scope.launch { repository.setDailyDigestEnabled(enabled) }
+                    },
+                    shakeToStop = shakeToStop,
+                    onShakeToStopChange = { enabled ->
+                        scope.launch { repository.setShakeToStop(enabled) }
                     }
                 )
             }

@@ -16,7 +16,7 @@ class VoiceAlertApp : Application() {
         super.onCreate()
         instance = this
         preferencesRepository = PreferencesRepository(applicationContext)
-        bluetoothManager = BluetoothDeviceManager(applicationContext)
+        bluetoothManager = BluetoothDeviceManager(applicationContext, preferencesRepository)
     }
 
     companion object {

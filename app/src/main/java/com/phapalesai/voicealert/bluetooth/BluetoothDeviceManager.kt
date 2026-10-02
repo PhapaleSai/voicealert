@@ -16,27 +16,42 @@ import android.util.Log
 import androidx.core.content.ContextCompat
 import com.phapalesai.voicealert.data.DeviceProfile
 import com.phapalesai.voicealert.data.DeviceType
+import com.phapalesai.voicealert.data.PreferencesRepository
 import com.phapalesai.voicealert.data.defaultVolume
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
+
+private const val LOW_BATTERY_THRESHOLD = 20
 
 /**
  * Reports the actual audio-capable Bluetooth device currently connected (A2DP: headphones,
  * speakers, car units) — never a placeholder. If nothing is connected, [connectedDeviceFlow]
  * is null and the UI should say so rather than pretending a device is present.
  */
-class BluetoothDeviceManager(private val context: Context) {
+class BluetoothDeviceManager(
+    private val context: Context,
+    private val repository: PreferencesRepository
+) {
+
+    private val scope = CoroutineScope(Dispatchers.IO)
 
     private val _connectedDeviceFlow = MutableStateFlow<DeviceProfile?>(null)
     val connectedDeviceFlow: StateFlow<DeviceProfile?> = _connectedDeviceFlow
 
+    // Fires once each time a connected device's battery first drops to/under the low threshold,
+    // so the service can speak a single warning instead of repeating it on every battery tick.
+    private val _lowBatteryEventFlow = MutableSharedFlow<DeviceProfile>(extraBufferCapacity = 1)
+    val lowBatteryEventFlow: SharedFlow<DeviceProfile> = _lowBatteryEventFlow
+    private var lowBatteryWarnedAddress: String? = null
+
     private val bluetoothAdapter: BluetoothAdapter? =
         (context.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager)?.adapter
-
-    // The user can manually override the auto-detected profile (e.g. force "Home Speaker") from
-    // the Devices screen; remembered per address so it survives an A2DP proxy refresh but not a
-    // disconnect/reconnect to a different device.
-    private var manualOverride: Pair<String, DeviceType>? = null
 
     private val connectionReceiver = object : BroadcastReceiver() {
         override fun onReceive(receivedContext: Context, intent: Intent) {
@@ -51,6 +66,7 @@ class BluetoothDeviceManager(private val context: Context) {
                     val device = getDeviceExtra(intent)
                     if (device != null && device.address == _connectedDeviceFlow.value?.address) {
                         _connectedDeviceFlow.value = null
+                        lowBatteryWarnedAddress = null
                     }
                 }
                 BluetoothA2dp.ACTION_CONNECTION_STATE_CHANGED -> {
@@ -65,6 +81,7 @@ class BluetoothDeviceManager(private val context: Context) {
                         BluetoothProfile.STATE_DISCONNECTED -> {
                             if (device.address == _connectedDeviceFlow.value?.address) {
                                 _connectedDeviceFlow.value = null
+                                lowBatteryWarnedAddress = null
                             }
                         }
                     }
@@ -73,6 +90,7 @@ class BluetoothDeviceManager(private val context: Context) {
                     val state = intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, -1)
                     if (state == BluetoothAdapter.STATE_OFF || state == BluetoothAdapter.STATE_TURNING_OFF) {
                         _connectedDeviceFlow.value = null
+                        lowBatteryWarnedAddress = null
                     }
                 }
                 ACTION_BATTERY_LEVEL_CHANGED -> {
@@ -80,7 +98,7 @@ class BluetoothDeviceManager(private val context: Context) {
                     val current = _connectedDeviceFlow.value
                     if (current != null && current.address == device.address) {
                         val level = intent.getIntExtra(EXTRA_BATTERY_LEVEL, -1).takeIf { it in 0..100 }
-                        _connectedDeviceFlow.value = current.copy(batteryLevel = level)
+                        applyBatteryLevel(current, level)
                     }
                 }
             }
@@ -151,20 +169,28 @@ class BluetoothDeviceManager(private val context: Context) {
         val name = resolveDisplayName(device)
         val address = device.address ?: return
 
-        val type = manualOverride?.takeIf { it.first == address }?.second ?: classifyDeviceType(name)
-        _connectedDeviceFlow.value = DeviceProfile(
-            address = address,
-            name = name,
-            type = type,
-            voiceEnabled = type != DeviceType.SILENT,
-            volume = type.defaultVolume(),
-            batteryLevel = readBatteryLevelReflectively(device)
-        )
+        scope.launch {
+            val savedProfiles = repository.deviceProfilesFlow.first()
+            val type = savedProfiles[address]?.let {
+                try { DeviceType.valueOf(it) } catch (e: IllegalArgumentException) { null }
+            } ?: classifyDeviceType(name)
 
-        // The A2DP device object often doesn't carry a battery value even when the device does
-        // report one over HFP — check that profile too, asynchronously, and patch it in if found.
-        if (_connectedDeviceFlow.value?.batteryLevel == null) {
-            queryHeadsetBatteryLevel(address)
+            _connectedDeviceFlow.value = DeviceProfile(
+                address = address,
+                name = name,
+                type = type,
+                voiceEnabled = type != DeviceType.SILENT,
+                volume = type.defaultVolume(),
+                batteryLevel = readBatteryLevelReflectively(device)
+            )
+
+            // The A2DP device object often doesn't carry a battery value even when the device does
+            // report one over HFP — check that profile too, asynchronously, and patch it in if found.
+            if (_connectedDeviceFlow.value?.batteryLevel == null) {
+                queryHeadsetBatteryLevel(address)
+            } else {
+                _connectedDeviceFlow.value?.let { applyBatteryLevel(it, it.batteryLevel) }
+            }
         }
     }
 
@@ -179,8 +205,11 @@ class BluetoothDeviceManager(private val context: Context) {
                         null
                     }
                     val level = match?.let { readBatteryLevelReflectively(it) }
-                    if (level != null && _connectedDeviceFlow.value?.address == address) {
-                        _connectedDeviceFlow.value = _connectedDeviceFlow.value?.copy(batteryLevel = level)
+                    val current = _connectedDeviceFlow.value
+                    if (level != null && current?.address == address) {
+                        val updated = current.copy(batteryLevel = level)
+                        _connectedDeviceFlow.value = updated
+                        applyBatteryLevel(updated, level)
                     }
                     adapter.closeProfileProxy(profile, proxy)
                 }
@@ -189,6 +218,25 @@ class BluetoothDeviceManager(private val context: Context) {
             }, BluetoothProfile.HEADSET)
         } catch (e: SecurityException) {
             Log.w("BluetoothDeviceManager", "Missing permission to query HFP battery", e)
+        }
+    }
+
+    /** Updates the stored battery level and fires a one-time low-battery event when it first drops low. */
+    private fun applyBatteryLevel(device: DeviceProfile, level: Int?) {
+        _connectedDeviceFlow.value = _connectedDeviceFlow.value?.takeIf { it.address == device.address }
+            ?.copy(batteryLevel = level) ?: return
+
+        if (level == null) return
+        if (level <= LOW_BATTERY_THRESHOLD) {
+            if (lowBatteryWarnedAddress != device.address) {
+                lowBatteryWarnedAddress = device.address
+                _lowBatteryEventFlow.tryEmit(device.copy(batteryLevel = level))
+            }
+        } else {
+            // Recovered above the threshold (charged up) — allow a fresh warning if it drops again.
+            if (lowBatteryWarnedAddress == device.address) {
+                lowBatteryWarnedAddress = null
+            }
         }
     }
 
@@ -233,14 +281,15 @@ class BluetoothDeviceManager(private val context: Context) {
         }
     }
 
+    /** Changes the current device's profile and remembers it permanently for this address. */
     fun updateDeviceType(type: DeviceType) {
         val current = _connectedDeviceFlow.value ?: return
-        manualOverride = current.address to type
         _connectedDeviceFlow.value = current.copy(
             type = type,
             voiceEnabled = type != DeviceType.SILENT,
             volume = type.defaultVolume()
         )
+        scope.launch { repository.setDeviceProfile(current.address, type.name) }
     }
 
     companion object {

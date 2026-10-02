@@ -27,6 +27,15 @@ class PreferencesRepository(private val context: Context) {
         val KEY_RESPECT_DND = booleanPreferencesKey("respect_system_dnd")
         val KEY_USER_NAME = stringPreferencesKey("user_name")
         val KEY_ANNOUNCE_CALLER = booleanPreferencesKey("announce_caller_enabled")
+        val KEY_DEVICE_PROFILES = stringPreferencesKey("device_profile_overrides") // "AA:BB=CAR;CC:DD=SHARED"
+        val KEY_VIP_CONTACTS = stringPreferencesKey("vip_contact_names") // "Mom;Dad;Boss"
+        val KEY_MISSED_CALLS = stringPreferencesKey("pending_missed_calls") // "name|number|timestamp;..."
+        val KEY_LOW_BATTERY_ALERT = booleanPreferencesKey("low_battery_alert_enabled")
+        val KEY_DAILY_DIGEST_ENABLED = booleanPreferencesKey("daily_digest_enabled")
+        val KEY_DIGEST_LAST_DATE = stringPreferencesKey("digest_last_date") // "yyyy-MM-dd"
+        val KEY_DIGEST_SPOKEN_COUNT = intPreferencesKey("digest_spoken_count")
+        val KEY_DIGEST_MISSED_CALL_COUNT = intPreferencesKey("digest_missed_call_count")
+        val KEY_SHAKE_TO_STOP = booleanPreferencesKey("shake_to_stop_enabled")
     }
 
     /** Map of packageName -> SpeakMode name, for apps the user has explicitly configured. */
@@ -173,5 +182,133 @@ class PreferencesRepository(private val context: Context) {
 
     suspend fun setAnnounceCaller(enabled: Boolean) {
         context.dataStore.edit { prefs -> prefs[KEY_ANNOUNCE_CALLER] = enabled }
+    }
+
+    /** Map of Bluetooth address -> DeviceType name, remembered permanently so reconnecting to the
+     *  same car/speaker/headphones doesn't require reselecting its profile every time. */
+    val deviceProfilesFlow: Flow<Map<String, String>> = context.dataStore.data.map { prefs ->
+        val raw = prefs[KEY_DEVICE_PROFILES] ?: return@map emptyMap()
+        raw.split(";")
+            .filter { it.isNotBlank() && it.contains("=") }
+            .associate {
+                val (address, type) = it.split("=", limit = 2)
+                address to type
+            }
+    }
+
+    suspend fun setDeviceProfile(address: String, type: String) {
+        context.dataStore.edit { prefs ->
+            val current = prefs[KEY_DEVICE_PROFILES] ?: ""
+            val profiles = current.split(";")
+                .filter { it.isNotBlank() && it.contains("=") }
+                .associate {
+                    val (addr, t) = it.split("=", limit = 2)
+                    addr to t
+                }
+                .toMutableMap()
+            profiles[address] = type
+            prefs[KEY_DEVICE_PROFILES] = profiles.entries.joinToString(";") { "${it.key}=${it.value}" }
+        }
+    }
+
+    /** Contact display names that always break through — Speak Over, bypassing Quiet Hours/DND/app rules. */
+    val vipContactsFlow: Flow<List<String>> = context.dataStore.data.map { prefs ->
+        val raw = prefs[KEY_VIP_CONTACTS] ?: return@map emptyList()
+        raw.split(";").filter { it.isNotBlank() }
+    }
+
+    suspend fun addVipContact(name: String) {
+        if (name.isBlank()) return
+        context.dataStore.edit { prefs ->
+            val current = prefs[KEY_VIP_CONTACTS] ?: ""
+            val names = current.split(";").filter { it.isNotBlank() }.toMutableList()
+            if (names.none { it.equals(name, ignoreCase = true) }) {
+                names.add(name)
+            }
+            prefs[KEY_VIP_CONTACTS] = names.joinToString(";")
+        }
+    }
+
+    suspend fun removeVipContact(name: String) {
+        context.dataStore.edit { prefs ->
+            val current = prefs[KEY_VIP_CONTACTS] ?: ""
+            val names = current.split(";").filter { it.isNotBlank() && !it.equals(name, ignoreCase = true) }
+            prefs[KEY_VIP_CONTACTS] = names.joinToString(";")
+        }
+    }
+
+    /** Calls that rang and were never answered, waiting to be announced next time the user unlocks the phone. */
+    val missedCallsFlow: Flow<List<String>> = context.dataStore.data.map { prefs ->
+        val raw = prefs[KEY_MISSED_CALLS] ?: return@map emptyList()
+        raw.split(";").filter { it.isNotBlank() }
+    }
+
+    suspend fun addMissedCall(entry: String) {
+        context.dataStore.edit { prefs ->
+            val current = prefs[KEY_MISSED_CALLS] ?: ""
+            val entries = current.split(";").filter { it.isNotBlank() }.toMutableList()
+            entries.add(entry)
+            prefs[KEY_MISSED_CALLS] = entries.joinToString(";")
+        }
+    }
+
+    suspend fun clearMissedCalls() {
+        context.dataStore.edit { prefs -> prefs[KEY_MISSED_CALLS] = "" }
+    }
+
+    /** Whether to proactively announce when a connected device's battery gets low. */
+    val lowBatteryAlertFlow: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[KEY_LOW_BATTERY_ALERT] ?: true
+    }
+
+    suspend fun setLowBatteryAlert(enabled: Boolean) {
+        context.dataStore.edit { prefs -> prefs[KEY_LOW_BATTERY_ALERT] = enabled }
+    }
+
+    /** Whether a short spoken summary of the previous day's activity plays once a new day starts. */
+    val dailyDigestEnabledFlow: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[KEY_DAILY_DIGEST_ENABLED] ?: false
+    }
+
+    suspend fun setDailyDigestEnabled(enabled: Boolean) {
+        context.dataStore.edit { prefs -> prefs[KEY_DAILY_DIGEST_ENABLED] = enabled }
+    }
+
+    val digestLastDateFlow: Flow<String> = context.dataStore.data.map { prefs ->
+        prefs[KEY_DIGEST_LAST_DATE] ?: ""
+    }
+
+    val digestSpokenCountFlow: Flow<Int> = context.dataStore.data.map { prefs ->
+        prefs[KEY_DIGEST_SPOKEN_COUNT] ?: 0
+    }
+
+    val digestMissedCallCountFlow: Flow<Int> = context.dataStore.data.map { prefs ->
+        prefs[KEY_DIGEST_MISSED_CALL_COUNT] ?: 0
+    }
+
+    suspend fun incrementDigestSpokenCount() {
+        context.dataStore.edit { prefs -> prefs[KEY_DIGEST_SPOKEN_COUNT] = (prefs[KEY_DIGEST_SPOKEN_COUNT] ?: 0) + 1 }
+    }
+
+    suspend fun incrementDigestMissedCallCount() {
+        context.dataStore.edit { prefs -> prefs[KEY_DIGEST_MISSED_CALL_COUNT] = (prefs[KEY_DIGEST_MISSED_CALL_COUNT] ?: 0) + 1 }
+    }
+
+    /** Resets the daily counters to zero for the new day, after the digest for the old day was spoken. */
+    suspend fun resetDigestForNewDay(today: String) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_DIGEST_LAST_DATE] = today
+            prefs[KEY_DIGEST_SPOKEN_COUNT] = 0
+            prefs[KEY_DIGEST_MISSED_CALL_COUNT] = 0
+        }
+    }
+
+    /** Whether shaking the phone immediately silences whatever VoiceAlert is currently speaking. */
+    val shakeToStopFlow: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[KEY_SHAKE_TO_STOP] ?: true
+    }
+
+    suspend fun setShakeToStop(enabled: Boolean) {
+        context.dataStore.edit { prefs -> prefs[KEY_SHAKE_TO_STOP] = enabled }
     }
 }

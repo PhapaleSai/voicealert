@@ -7,6 +7,10 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.database.Cursor
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
 import android.net.Uri
 import android.os.Build
 import android.os.IBinder
@@ -19,6 +23,7 @@ import android.telephony.TelephonyManager
 import android.util.Log
 import androidx.core.content.ContextCompat
 import com.phapalesai.voicealert.VoiceAlertApp
+import com.phapalesai.voicealert.data.DeviceProfile
 import com.phapalesai.voicealert.data.DeviceType
 import com.phapalesai.voicealert.data.NotificationEvent
 import com.phapalesai.voicealert.data.SpeakMode
@@ -31,6 +36,10 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import kotlin.math.sqrt
 
 class VoiceNotificationListenerService : NotificationListenerService() {
 
@@ -50,19 +59,75 @@ class VoiceNotificationListenerService : NotificationListenerService() {
     // ACTION_PHONE_STATE_CHANGED broadcast's EXTRA_INCOMING_NUMBER does (requires READ_CALL_LOG).
     private var lastAnnouncedNumber: String? = null
 
+    // Missed-call tracking: a call that rings and goes back to IDLE without ever reaching
+    // OFFHOOK was never answered.
+    private var ringingNumber: String? = null
+    private var ringingStartTime: Long = 0L
+    private var callWasAnswered: Boolean = false
+
     private val phoneStateReceiver = object : BroadcastReceiver() {
         override fun onReceive(receivedContext: Context, intent: Intent) {
-            val state = intent.getStringExtra(TelephonyManager.EXTRA_STATE)
-            if (state == TelephonyManager.EXTRA_STATE_RINGING) {
-                val incomingNumber = intent.getStringExtra(TelephonyManager.EXTRA_INCOMING_NUMBER)
-                if (!incomingNumber.isNullOrBlank() && incomingNumber != lastAnnouncedNumber) {
-                    lastAnnouncedNumber = incomingNumber
-                    announceIncomingCall(incomingNumber)
+            when (intent.getStringExtra(TelephonyManager.EXTRA_STATE)) {
+                TelephonyManager.EXTRA_STATE_RINGING -> {
+                    val incomingNumber = intent.getStringExtra(TelephonyManager.EXTRA_INCOMING_NUMBER)
+                    if (!incomingNumber.isNullOrBlank()) {
+                        ringingNumber = incomingNumber
+                        ringingStartTime = System.currentTimeMillis()
+                        callWasAnswered = false
+                        if (incomingNumber != lastAnnouncedNumber) {
+                            lastAnnouncedNumber = incomingNumber
+                            announceIncomingCall(incomingNumber)
+                        }
+                    }
                 }
-            } else {
-                lastAnnouncedNumber = null
+                TelephonyManager.EXTRA_STATE_OFFHOOK -> {
+                    callWasAnswered = true
+                }
+                TelephonyManager.EXTRA_STATE_IDLE -> {
+                    val missedNumber = ringingNumber
+                    if (missedNumber != null && !callWasAnswered) {
+                        recordMissedCall(missedNumber)
+                    }
+                    ringingNumber = null
+                    lastAnnouncedNumber = null
+                }
             }
         }
+    }
+
+    /** Announces any calls missed while the phone was locked, the moment the user unlocks it. */
+    private val unlockReceiver = object : BroadcastReceiver() {
+        override fun onReceive(receivedContext: Context, intent: Intent) {
+            if (intent.action == Intent.ACTION_USER_PRESENT) {
+                announcePendingMissedCalls()
+            }
+        }
+    }
+
+    private var sensorManager: SensorManager? = null
+    private var lastShakeTime = 0L
+
+    @Volatile private var shakeToStopEnabled = true
+
+    private val shakeListener = object : SensorEventListener {
+        override fun onSensorChanged(event: SensorEvent) {
+            if (!shakeToStopEnabled) return
+            val gX = event.values[0] / SensorManager.GRAVITY_EARTH
+            val gY = event.values[1] / SensorManager.GRAVITY_EARTH
+            val gZ = event.values[2] / SensorManager.GRAVITY_EARTH
+            val gForce = sqrt(gX * gX + gY * gY + gZ * gZ)
+            if (gForce > 2.5f) {
+                val now = System.currentTimeMillis()
+                if (now - lastShakeTime > 1000) {
+                    lastShakeTime = now
+                    Log.d("VoiceListener", "Shake detected — stopping speech.")
+                    ttsManager?.stop()
+                    currentlySpokenKey = null
+                }
+            }
+        }
+
+        override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
     }
 
     override fun onCreate() {
@@ -70,26 +135,46 @@ class VoiceNotificationListenerService : NotificationListenerService() {
         ttsManager = TTSManager(applicationContext)
         activeService = this
         registerCallStateWatcher()
+
         try {
-            ContextCompat.registerReceiver(
-                this,
-                phoneStateReceiver,
-                IntentFilter(TelephonyManager.ACTION_PHONE_STATE_CHANGED),
-                ContextCompat.RECEIVER_NOT_EXPORTED
-            )
+            ContextCompat.registerReceiver(this, phoneStateReceiver, IntentFilter(TelephonyManager.ACTION_PHONE_STATE_CHANGED), ContextCompat.RECEIVER_NOT_EXPORTED)
+            ContextCompat.registerReceiver(this, unlockReceiver, IntentFilter(Intent.ACTION_USER_PRESENT), ContextCompat.RECEIVER_NOT_EXPORTED)
         } catch (e: SecurityException) {
             Log.w("VoiceListener", "Missing permission to observe incoming call number", e)
         }
+
+        sensorManager = (getSystemService(Context.SENSOR_SERVICE) as? SensorManager)?.also { sm ->
+            sm.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)?.let {
+                sm.registerListener(shakeListener, it, SensorManager.SENSOR_DELAY_NORMAL)
+            }
+        }
+
+        val repository = VoiceAlertApp.instance.preferencesRepository
+        scope.launch {
+            repository.shakeToStopFlow.collect { shakeToStopEnabled = it }
+        }
+        scope.launch {
+            VoiceAlertApp.instance.bluetoothManager.lowBatteryEventFlow.collect { device ->
+                announceLowBattery(device)
+            }
+        }
+
         Log.d("VoiceListener", "VoiceNotificationListenerService Created")
     }
 
     override fun onDestroy() {
         super.onDestroy()
         unregisterCallStateWatcher()
+        sensorManager?.unregisterListener(shakeListener)
         try {
             unregisterReceiver(phoneStateReceiver)
         } catch (e: IllegalArgumentException) {
             // Receiver was never registered (e.g. permission was missing at onCreate) — fine to ignore.
+        }
+        try {
+            unregisterReceiver(unlockReceiver)
+        } catch (e: IllegalArgumentException) {
+            // Same as above.
         }
         ttsManager?.shutdown()
         activeService = null
@@ -120,6 +205,101 @@ class VoiceNotificationListenerService : NotificationListenerService() {
             // SPEAK_OVER: a ringing call is already an interruption, so the announcement should
             // always cut through, at full volume, regardless of what's currently playing.
             ttsManager?.speak(announcement, locale, volume = 1f, mode = SpeakMode.SPEAK_OVER)
+        }
+    }
+
+    private fun recordMissedCall(phoneNumber: String) {
+        scope.launch {
+            val repository = VoiceAlertApp.instance.preferencesRepository
+            val callerName = resolveContactName(phoneNumber) ?: phoneNumber
+            repository.addMissedCall("$callerName|$phoneNumber|${System.currentTimeMillis()}")
+            repository.incrementDigestMissedCallCount()
+            Log.d("VoiceListener", "Recorded missed call from $callerName")
+        }
+    }
+
+    /** Speaks "You missed a call from X, N minutes ago" for every call missed since the last unlock. */
+    private fun announcePendingMissedCalls() {
+        scope.launch {
+            val repository = VoiceAlertApp.instance.preferencesRepository
+            if (!repository.travelModeFlow.first()) return@launch
+
+            val missed = repository.missedCallsFlow.first()
+            if (missed.isEmpty()) return@launch
+
+            val preferredLang = repository.preferredLanguageFlow.first()
+            val now = System.currentTimeMillis()
+
+            val sentences = missed.mapNotNull { entry ->
+                val parts = entry.split("|")
+                if (parts.size != 3) return@mapNotNull null
+                val (name, _, timestampStr) = parts
+                val timestamp = timestampStr.toLongOrNull() ?: return@mapNotNull null
+                val minutesAgo = ((now - timestamp) / 60000L).coerceAtLeast(0)
+                val whenText = when {
+                    minutesAgo < 1 -> "just now"
+                    minutesAgo == 1L -> "1 minute ago"
+                    minutesAgo < 60 -> "$minutesAgo minutes ago"
+                    else -> "earlier"
+                }
+                "You missed a call from $name, $whenText"
+            }
+
+            if (sentences.isNotEmpty()) {
+                val announcement = sentences.joinToString(". ")
+                Log.d("VoiceListener", "Announcing missed calls: $announcement")
+                val locale = LanguageDetector.detectLanguage(announcement, preferredLang)
+                ttsManager?.speak(announcement, locale, volume = 1f, mode = SpeakMode.SPEAK_OVER)
+            }
+            repository.clearMissedCalls()
+        }
+    }
+
+    private fun announceLowBattery(device: DeviceProfile) {
+        scope.launch {
+            val repository = VoiceAlertApp.instance.preferencesRepository
+            if (!repository.travelModeFlow.first() || !repository.lowBatteryAlertFlow.first()) return@launch
+
+            val level = device.batteryLevel ?: return@launch
+            val announcement = "${device.name} is at $level percent battery, charge soon"
+            Log.d("VoiceListener", "Low battery alert: $announcement")
+            val preferredLang = repository.preferredLanguageFlow.first()
+            val locale = LanguageDetector.detectLanguage(announcement, preferredLang)
+            ttsManager?.speak(announcement, locale, volume = device.volume, mode = SpeakMode.SPEAK)
+        }
+    }
+
+    /** If a new day has started, speaks a short summary of yesterday's activity and resets counters. */
+    private suspend fun checkDailyDigest() {
+        val repository = VoiceAlertApp.instance.preferencesRepository
+        if (!repository.dailyDigestEnabledFlow.first()) return
+
+        val today = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
+        val lastDate = repository.digestLastDateFlow.first()
+
+        if (lastDate.isEmpty()) {
+            // First run ever — nothing to summarize yet, just start tracking from today.
+            repository.resetDigestForNewDay(today)
+            return
+        }
+
+        if (lastDate != today) {
+            val spokenCount = repository.digestSpokenCountFlow.first()
+            val missedCount = repository.digestMissedCallCountFlow.first()
+
+            if (spokenCount > 0 || missedCount > 0) {
+                val parts = mutableListOf<String>()
+                if (spokenCount > 0) parts.add("$spokenCount notification${if (spokenCount == 1) "" else "s"} spoken")
+                if (missedCount > 0) parts.add("$missedCount missed call${if (missedCount == 1) "" else "s"}")
+                val announcement = "Yesterday: " + parts.joinToString(", ")
+
+                Log.d("VoiceListener", "Daily digest: $announcement")
+                val preferredLang = repository.preferredLanguageFlow.first()
+                val locale = LanguageDetector.detectLanguage(announcement, preferredLang)
+                ttsManager?.speak(announcement, locale, volume = 1f, mode = SpeakMode.SPEAK)
+            }
+
+            repository.resetDigestForNewDay(today)
         }
     }
 
@@ -217,10 +397,13 @@ class VoiceNotificationListenerService : NotificationListenerService() {
         if (sbn == null) return
 
         val packageName = sbn.packageName
+        val rawTitle = sbn.notification?.extras?.getCharSequence("android.title")?.toString() ?: ""
 
         scope.launch {
             val app = VoiceAlertApp.instance
             val repository = app.preferencesRepository
+
+            checkDailyDigest()
 
             val travelModeActive = repository.travelModeFlow.first()
             if (!travelModeActive) {
@@ -228,17 +411,24 @@ class VoiceNotificationListenerService : NotificationListenerService() {
                 return@launch
             }
 
+            // A VIP contact always gets through — bypassing their app's mode, Quiet Hours and DND —
+            // matched by comparing the notification's sender/title against the VIP name list.
+            val vipContacts = repository.vipContactsFlow.first()
+            val isVip = vipContacts.any { vip -> rawTitle.contains(vip, ignoreCase = true) }
+
             val appRules = repository.appRulesFlow.first()
-            val speakMode = appRules[packageName]?.let {
+            var speakMode = appRules[packageName]?.let {
                 try { SpeakMode.valueOf(it) } catch (e: IllegalArgumentException) { SpeakMode.SPEAK }
             } ?: SpeakMode.SPEAK
 
-            if (speakMode == SpeakMode.DISABLED) {
+            if (isVip) {
+                speakMode = SpeakMode.SPEAK_OVER
+            } else if (speakMode == SpeakMode.DISABLED) {
                 Log.d("VoiceListener", "App $packageName is disabled for voice alerts. Skipping.")
                 return@launch
             }
 
-            // Speak Over apps (e.g. an urgent contact) bypass Quiet Hours and system DND on purpose.
+            // Speak Over apps/VIP contacts bypass Quiet Hours and system DND on purpose.
             if (speakMode != SpeakMode.SPEAK_OVER) {
                 if (repository.quietHoursEnabledFlow.first()) {
                     val start = repository.quietHoursStartFlow.first()
@@ -277,6 +467,7 @@ class VoiceNotificationListenerService : NotificationListenerService() {
                 val volume = device?.volume ?: 1f
                 currentlySpokenKey = sbn.key
                 ttsManager?.speak(event.spokenText, locale, volume, speakMode)
+                repository.incrementDigestSpokenCount()
 
                 // Post to global recent alerts list
                 _recentEventsFlow.value = listOf(event) + _recentEventsFlow.value.take(20)

@@ -9,12 +9,17 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.BatteryAlert
 import androidx.compose.material.icons.filled.Call
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.NightsStay
 import androidx.compose.material.icons.filled.PrivacyTip
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.Speed
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.Summarize
+import androidx.compose.material.icons.filled.Vibration
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -49,7 +54,16 @@ fun SettingsScreen(
     userName: String,
     onUserNameChange: (String) -> Unit,
     announceCaller: Boolean,
-    onAnnounceCallerChange: (Boolean) -> Unit
+    onAnnounceCallerChange: (Boolean) -> Unit,
+    vipContacts: List<String>,
+    onAddVipContact: () -> Unit,
+    onRemoveVipContact: (String) -> Unit,
+    lowBatteryAlert: Boolean,
+    onLowBatteryAlertChange: (Boolean) -> Unit,
+    dailyDigestEnabled: Boolean,
+    onDailyDigestEnabledChange: (Boolean) -> Unit,
+    shakeToStop: Boolean,
+    onShakeToStopChange: (Boolean) -> Unit
 ) {
     var speechSpeed by remember { mutableFloatStateOf(1.0f) }
 
@@ -367,6 +381,130 @@ fun SettingsScreen(
                             color = TextMuted
                         )
                     }
+                }
+            }
+        }
+
+        // VIP Contacts Card
+        item {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .border(1.dp, SurfaceCardBorder, RoundedCornerShape(22.dp)),
+                colors = CardDefaults.cardColors(containerColor = SurfaceCard)
+            ) {
+                Column(modifier = Modifier.padding(18.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Default.Star,
+                                contentDescription = null,
+                                tint = SolarGold,
+                                modifier = Modifier.size(24.dp)
+                            )
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Text(
+                                text = "VIP Contacts",
+                                style = MaterialTheme.typography.titleLarge.copy(fontSize = 16.sp, fontWeight = FontWeight.Bold),
+                                color = SolarGold
+                            )
+                        }
+                        IconButton(onClick = onAddVipContact) {
+                            Icon(Icons.Default.Add, contentDescription = "Add VIP contact", tint = SolarGold)
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = "These people always break through — any app, any time, even during Quiet Hours or Do Not Disturb.",
+                        style = MaterialTheme.typography.bodyMedium.copy(fontSize = 11.sp),
+                        color = TextMuted
+                    )
+
+                    if (vipContacts.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(12.dp))
+                        vipContacts.forEach { name ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 4.dp)
+                                    .border(1.dp, SurfaceCardBorder, RoundedCornerShape(12.dp))
+                                    .padding(horizontal = 14.dp, vertical = 10.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = name,
+                                    style = MaterialTheme.typography.bodyLarge.copy(fontSize = 14.sp, fontWeight = FontWeight.Bold),
+                                    color = TextPrimary
+                                )
+                                IconButton(
+                                    onClick = { onRemoveVipContact(name) },
+                                    modifier = Modifier.size(28.dp)
+                                ) {
+                                    Icon(Icons.Default.Close, contentDescription = "Remove", tint = TextMuted, modifier = Modifier.size(18.dp))
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Low Battery / Daily Digest / Shake to Stop Card
+        item {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .border(1.dp, SurfaceCardBorder, RoundedCornerShape(22.dp)),
+                colors = CardDefaults.cardColors(containerColor = SurfaceCard)
+            ) {
+                Column(modifier = Modifier.padding(18.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Default.BatteryAlert,
+                            contentDescription = null,
+                            tint = CrimsonAlert,
+                            modifier = Modifier.size(24.dp)
+                        )
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Text(
+                            text = "Smart Alerts",
+                            style = MaterialTheme.typography.titleLarge.copy(fontSize = 16.sp, fontWeight = FontWeight.Bold),
+                            color = CrimsonAlert
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    SettingToggleRow(
+                        title = "Low Battery Alert",
+                        subtitle = "Announces when your connected device's battery gets low",
+                        checked = lowBatteryAlert,
+                        onCheckedChange = onLowBatteryAlertChange
+                    )
+
+                    Divider(color = SurfaceCardBorder, modifier = Modifier.padding(vertical = 10.dp))
+
+                    SettingToggleRow(
+                        title = "Daily Voice Digest",
+                        subtitle = "A short spoken summary of yesterday's activity",
+                        checked = dailyDigestEnabled,
+                        onCheckedChange = onDailyDigestEnabledChange
+                    )
+
+                    Divider(color = SurfaceCardBorder, modifier = Modifier.padding(vertical = 10.dp))
+
+                    SettingToggleRow(
+                        title = "Shake to Stop",
+                        subtitle = "Shake your phone to instantly silence any speech",
+                        checked = shakeToStop,
+                        onCheckedChange = onShakeToStopChange
+                    )
                 }
             }
         }
